@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ÉpubSon — Convertisseur Livre Audio</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap');
+
+:root {
+  --void: #080608;
+  --deep: #100e12;
+  --surface: #18151c;
+  --lift: #221e28;
+  --border: rgba(255,255,255,0.07);
+  --border-hi: rgba(255,255,255,0.14);
+  --ink: #d4cfe0;
+  --ink-dim: #7a7385;
+  --ink-faint: #3d3845;
+  --accent: #c084fc;
+  --accent2: #a855f7;
+  --accent-glow: rgba(192,132,252,0.15);
+  --green: #86efac;
+  --green-dim: rgba(134,239,172,0.15);
+  --red: #fca5a5;
+  --red-dim: rgba(252,165,165,0.1);
+  --amber: #fcd34d;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 300;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* grain */
+body::after {
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:999;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+}
+
+.wrap {
+  width:100%; max-width:680px;
+  padding:0 24px 80px;
+  display:flex; flex-direction:column; gap:0;
+}
+
+/* ── header ── */
+header {
+  padding:52px 0 40px;
+  border-bottom:1px solid var(--border);
+  margin-bottom:36px;
+}
+
+.logo-row {
+  display:flex; align-items:center; gap:14px; margin-bottom:8px;
+}
+
+.logo-icon {
+  width:42px; height:42px;
+  background:linear-gradient(135deg, var(--accent), #7c3aed);
+  border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:20px;
+  box-shadow:0 0 28px rgba(168,85,247,0.35);
+}
+
+.logo-text {
+  font-family:'DM Serif Display', serif;
+  font-size:26px; color:#fff;
+  letter-spacing:-0.02em;
+}
+
+.logo-text span { color: var(--accent); }
+
+.tagline { font-size:13px; color:var(--ink-dim); letter-spacing:0.03em; margin-top:4px; }
+
+/* ── card ── */
+.card {
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:28px;
+  margin-bottom:16px;
+}
+
+.card-title {
+  font-family:'DM Serif Display', serif;
+  font-size:15px; color:#fff; margin-bottom:4px;
+}
+
+.card-sub { font-size:12px; color:var(--ink-dim); line-height:1.5; margin-bottom:16px; }
+.card-sub a { color:var(--accent); text-decoration:none; }
+.card-sub a:hover { text-decoration:underline; }
+
+/* inputs */
+.input-row { display:flex; gap:8px; }
+
+.inp {
+  flex:1;
+  background:var(--lift);
+  border:1px solid var(--border);
+  border-radius:8px;
+  color:#fff;
+  font-family:'DM Sans', sans-serif;
+  font-size:13px;
+  padding:10px 14px;
+  outline:none;
+  transition:border-color 0.2s;
+}
+
+.inp:focus { border-color:rgba(192,132,252,0.5); }
+.inp::placeholder { color:var(--ink-faint); }
+
+.btn-primary {
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none; border-radius:8px;
+  color:#fff; font-family:'DM Sans',sans-serif; font-weight:500;
+  font-size:13px; padding:10px 18px; cursor:pointer;
+  transition:all 0.2s; white-space:nowrap;
+  box-shadow:0 0 16px rgba(168,85,247,0.25);
+}
+
+.btn-primary:hover { opacity:0.88; transform:translateY(-1px); }
+.btn-primary:disabled { opacity:0.4; cursor:not-allowed; transform:none; }
+
+.msg { font-size:12px; margin-top:8px; }
+.msg.ok  { color:var(--green); }
+.msg.err { color:var(--red); }
+
+/* voice grid */
+.voice-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px;
+}
+
+.voice-card {
+  padding:10px 12px;
+  background:var(--lift); border:1px solid var(--border);
+  border-radius:8px; cursor:pointer; transition:all 0.18s;
+}
+
+.voice-card:hover { border-color:var(--border-hi); }
+.voice-card.sel { border-color:var(--accent); background:rgba(192,132,252,0.07); }
+
+.vc-name { font-size:13px; color:#fff; margin-bottom:2px; }
+.vc-meta { font-size:11px; color:var(--ink-dim); }
+
+.tag {
+  display:inline-block; font-size:9px; letter-spacing:0.08em;
+  text-transform:uppercase; padding:1px 5px; border-radius:4px;
+  margin-left:5px; vertical-align:middle;
+}
+
+.tag.n2 { background:rgba(192,132,252,0.2); color:var(--accent); }
+.tag.wn { background:rgba(134,239,172,0.15); color:var(--green); }
+
+/* drop zone */
+#dropzone {
+  display:none;
+  border:1px dashed rgba(192,132,252,0.3);
+  border-radius:12px; padding:44px 24px;
+  text-align:center; cursor:pointer;
+  transition:all 0.25s; margin-bottom:16px;
+  background:rgba(192,132,252,0.02);
+  position:relative; overflow:hidden;
+}
+
+#dropzone::before {
+  content:''; position:absolute; inset:0;
+  background:radial-gradient(ellipse 70% 70% at 50% 50%, rgba(192,132,252,0.06), transparent);
+  opacity:0; transition:opacity 0.25s;
+}
+
+#dropzone:hover::before, #dropzone.over::before { opacity:1; }
+#dropzone:hover, #dropzone.over { border-color:rgba(192,132,252,0.6); }
+
+.dz-icon { font-size:36px; margin-bottom:10px; display:block; }
+.dz-title { font-family:'DM Serif Display',serif; font-size:18px; color:#fff; margin-bottom:4px; }
+.dz-sub { font-size:12px; color:var(--ink-dim); }
+#fileInput { display:none; }
+
+/* book preview */
+#bookPreview {
+  display:none;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:22px 24px;
+  margin-bottom:16px; gap:18px; align-items:flex-start;
+}
+
+.book-cover {
+  width:64px; height:86px; flex-shrink:0;
+  background:linear-gradient(135deg,var(--accent),#7c3aed);
+  border-radius:4px 8px 8px 4px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:28px;
+  box-shadow:-3px 4px 16px rgba(168,85,247,0.3), inset -2px 0 0 rgba(0,0,0,0.4);
+  position:relative; overflow:hidden;
+}
+
+.book-cover img {
+  width:100%; height:100%; object-fit:cover;
+  border-radius:inherit;
+}
+
+.book-details { flex:1; min-width:0; }
+.book-name { font-family:'DM Serif Display',serif; font-size:17px; color:#fff; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.book-author { font-size:12px; color:var(--ink-dim); margin-bottom:10px; }
+
+.book-stats {
+  display:flex; gap:12px; flex-wrap:wrap;
+}
+
+.stat { font-size:11px; color:var(--ink-dim); }
+.stat strong { color:var(--ink); font-weight:500; }
+
+/* chapter list */
+.chapter-list {
+  max-height:160px; overflow-y:auto;
+  margin-top:10px; display:flex; flex-direction:column; gap:4px;
+}
+
+.chapter-list::-webkit-scrollbar { width:3px; }
+.chapter-list::-webkit-scrollbar-thumb { background:var(--border-hi); border-radius:2px; }
+
+.ch-item {
+  display:flex; align-items:center; gap:8px;
+  padding:6px 8px; border-radius:6px;
+  background:var(--lift); cursor:pointer;
+  transition:background 0.15s;
+}
+
+.ch-item:hover { background:var(--lift); }
+.ch-item input[type=checkbox] { accent-color:var(--accent); width:13px; height:13px; cursor:pointer; }
+.ch-item-name { font-size:12px; color:var(--ink); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ch-item-words { font-size:11px; color:var(--ink-dim); flex-shrink:0; }
+
+.sel-row { display:flex; gap:8px; margin-bottom:8px; }
+.btn-sm {
+  font-size:11px; padding:4px 10px; background:var(--lift);
+  border:1px solid var(--border); border-radius:6px;
+  color:var(--ink-dim); cursor:pointer; transition:all 0.15s;
+}
+.btn-sm:hover { color:var(--ink); border-color:var(--border-hi); }
+
+/* convert btn */
+#convertBtn {
+  display:none;
+  width:100%; padding:16px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none; border-radius:10px;
+  color:#fff; font-family:'DM Sans',sans-serif;
+  font-weight:500; font-size:15px; cursor:pointer;
+  box-shadow:0 0 32px rgba(168,85,247,0.3);
+  transition:all 0.2s; margin-bottom:16px;
+}
+
+#convertBtn:hover { opacity:0.9; box-shadow:0 0 44px rgba(168,85,247,0.45); }
+#convertBtn:disabled { opacity:0.35; cursor:not-allowed; }
+
+/* progress panel */
+#progressPanel {
+  display:none;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:28px;
+  margin-bottom:16px;
+}
+
+.prog-header {
+  display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;
+}
+
+.prog-title { font-family:'DM Serif Display',serif; font-size:16px; color:#fff; }
+.prog-pct   { font-size:22px; font-weight:500; color:var(--accent); letter-spacing:-0.02em; }
+
+.prog-bar-wrap {
+  width:100%; height:6px; background:var(--lift);
+  border-radius:3px; overflow:hidden; margin-bottom:6px;
+}
+
+.prog-bar {
+  height:100%;
+  background:linear-gradient(90deg,var(--accent2),var(--accent),#e879f9);
+  border-radius:3px; width:0%;
+  transition:width 0.4s ease;
+  box-shadow:0 0 10px rgba(192,132,252,0.5);
+}
+
+.prog-sub { font-size:11px; color:var(--ink-dim); margin-bottom:20px; }
+
+/* phase steps */
+.phases { display:flex; flex-direction:column; gap:10px; }
+
+.phase {
+  display:flex; align-items:center; gap:12px;
+  padding:10px 14px;
+  background:var(--lift); border-radius:8px;
+  border:1px solid var(--border);
+  transition:all 0.3s;
+}
+
+.phase.active { border-color:rgba(192,132,252,0.35); background:rgba(192,132,252,0.06); }
+.phase.done   { border-color:rgba(134,239,172,0.25); background:rgba(134,239,172,0.04); }
+.phase.error  { border-color:rgba(252,165,165,0.25); background:var(--red-dim); }
+
+.phase-icon {
+  width:28px; height:28px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:13px; flex-shrink:0;
+  background:var(--surface); border:1px solid var(--border);
+}
+
+.phase.active .phase-icon { border-color:var(--accent); animation:spin 1.2s linear infinite; }
+.phase.done .phase-icon   { background:var(--green-dim); border-color:rgba(134,239,172,0.4); }
+.phase.error .phase-icon  { background:var(--red-dim);   border-color:rgba(252,165,165,0.4); }
+
+@keyframes spin { to { transform:rotate(360deg); } }
+
+.phase-info { flex:1; }
+.phase-name { font-size:13px; color:var(--ink); }
+.phase-detail { font-size:11px; color:var(--ink-dim); margin-top:1px; }
+
+.phase-bar-wrap { width:80px; height:3px; background:var(--surface); border-radius:2px; flex-shrink:0; }
+.phase-bar { height:100%; background:var(--accent); border-radius:2px; width:0%; transition:width 0.3s; }
+
+/* log */
+.log-wrap {
+  margin-top:16px;
+  max-height:120px; overflow-y:auto;
+  background:var(--deep); border-radius:8px; padding:10px 14px;
+}
+
+.log-wrap::-webkit-scrollbar { width:3px; }
+.log-wrap::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+.log-line {
+  font-size:11px; color:var(--ink-dim); font-family:monospace;
+  line-height:1.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+.log-line.ok  { color:rgba(134,239,172,0.8); }
+.log-line.err { color:rgba(252,165,165,0.8); }
+.log-line.hi  { color:rgba(192,132,252,0.8); }
+
+/* result */
+#resultPanel {
+  display:none;
+  background:linear-gradient(135deg, rgba(134,239,172,0.06), rgba(134,239,172,0.02));
+  border:1px solid rgba(134,239,172,0.2);
+  border-radius:12px; padding:28px;
+  text-align:center; margin-bottom:16px;
+}
+
+.result-icon { font-size:44px; margin-bottom:12px; }
+.result-title { font-family:'DM Serif Display',serif; font-size:20px; color:#fff; margin-bottom:6px; }
+.result-sub { font-size:13px; color:var(--ink-dim); margin-bottom:24px; line-height:1.6; }
+
+.download-btns { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+
+.btn-dl {
+  display:inline-flex; align-items:center; gap:8px;
+  padding:12px 22px; border-radius:9px;
+  font-family:'DM Sans',sans-serif; font-size:13px; font-weight:500;
+  cursor:pointer; text-decoration:none; transition:all 0.2s;
+  border:none;
+}
+
+.btn-dl-primary {
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff; box-shadow:0 0 24px rgba(168,85,247,0.3);
+}
+
+.btn-dl-primary:hover { opacity:0.88; transform:translateY(-1px); }
+
+.btn-dl-secondary {
+  background:var(--lift); color:var(--ink);
+  border:1px solid var(--border);
+}
+
+.btn-dl-secondary:hover { border-color:var(--border-hi); color:#fff; }
+
+.btn-restart {
+  margin-top:16px; background:none; border:1px solid var(--border);
+  border-radius:8px; color:var(--ink-dim); font-family:'DM Sans',sans-serif;
+  font-size:12px; padding:8px 18px; cursor:pointer; transition:all 0.2s;
+}
+
+.btn-restart:hover { color:var(--ink); border-color:var(--border-hi); }
+
+/* abort btn */
+#abortBtn {
+  display:none; width:100%; padding:10px;
+  background:none; border:1px solid rgba(252,165,165,0.2);
+  border-radius:8px; color:var(--red); font-family:'DM Sans',sans-serif;
+  font-size:12px; cursor:pointer; margin-bottom:16px; transition:all 0.2s;
+}
+
+#abortBtn:hover { background:var(--red-dim); }
+
+.fade-in { animation:fadeIn 0.4s ease forwards; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+
+@media(max-width:500px) {
+  .voice-grid { grid-template-columns:1fr; }
+  .download-btns { flex-direction:column; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo-row">
+      <div class="logo-icon">🎧</div>
+      <div class="logo-text">Épub<span>Son</span></div>
+    </div>
+    <div class="tagline">Convertisseur ePub → Livre audio · Google Neural2 + SSML IA</div>
+  </header>
+
+  <!-- Step 1: API Keys -->
+  <div class="card" id="keysCard">
+    <div class="card-title">Clés API</div>
+    <div class="card-sub">
+      Deux clés nécessaires pour la conversion.<br>
+      <a href="https://console.cloud.google.com/apis/library/texttospeech.googleapis.com" target="_blank">→ Google Cloud TTS</a> &nbsp;·&nbsp;
+      <a href="https://console.anthropic.com" target="_blank">→ Anthropic Claude</a>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+      <div class="input-row">
+        <input class="inp" id="gcpKey" type="password" placeholder="Clé Google Cloud (AIza…)">
+      </div>
+      <div class="input-row">
+        <input class="inp" id="claudeKey" type="password" placeholder="Clé Anthropic Claude (sk-ant-…)">
+        <button class="btn-primary" onclick="validateKeys()">Valider</button>
+      </div>
+    </div>
+
+    <div id="keysMsg" class="msg"></div>
+
+    <!-- Voice picker -->
+    <div id="voicePicker" style="display:none;margin-top:16px">
+      <div style="font-size:12px;color:var(--ink-dim);margin-bottom:8px;letter-spacing:0.04em">Choisir la voix de narration</div>
+      <div class="voice-grid" id="voiceGrid"></div>
+    </div>
+  </div>
+
+  <!-- Step 2: ePub drop -->
+  <div id="dropzone">
+    <span class="dz-icon">📖</span>
+    <div class="dz-title">Déposer votre fichier ePub</div>
+    <div class="dz-sub">ou cliquer pour parcourir — .epub uniquement</div>
+    <input type="file" id="fileInput" accept=".epub">
+  </div>
+
+  <!-- Book preview & chapter selection -->
+  <div id="bookPreview">
+    <div class="book-cover" id="bookCover">📚</div>
+    <div class="book-details">
+      <div class="book-name" id="bookName">—</div>
+      <div class="book-author" id="bookAuthorEl">—</div>
+      <div class="book-stats">
+        <div class="stat"><strong id="statChapters">0</strong> chapitres</div>
+        <div class="stat"><strong id="statWords">0</strong> mots</div>
+        <div class="stat">~<strong id="statDuration">0</strong> min estimées</div>
+      </div>
+      <div style="margin-top:12px">
+        <div style="font-size:11px;color:var(--ink-dim);margin-bottom:6px;letter-spacing:0.04em">CHAPITRES À INCLURE</div>
+        <div class="sel-row">
+          <button class="btn-sm" onclick="selectAll(true)">Tout sélectionner</button>
+          <button class="btn-sm" onclick="selectAll(false)">Tout désélectionner</button>
+        </div>
+        <div class="chapter-list" id="chapterList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Convert button -->
+  <button id="convertBtn" onclick="startConversion()">
+    🎙 Lancer la conversion en livre audio
+  </button>
+
+  <!-- Abort -->
+  <button id="abortBtn" onclick="abortConversion()">✕ Annuler la conversion</button>
+
+  <!-- Progress -->
+  <div id="progressPanel">
+    <div class="prog-header">
+      <div class="prog-title">Conversion en cours</div>
+      <div class="prog-pct" id="progPct">0%</div>
+    </div>
+    <div class="prog-bar-wrap"><div class="prog-bar" id="progBar"></div></div>
+    <div class="prog-sub" id="progSub">Initialisation…</div>
+
+    <div class="phases">
+      <div class="phase" id="ph0">
+        <div class="phase-icon">①</div>
+        <div class="phase-info">
+          <div class="phase-name">Analyse SSML — Claude</div>
+          <div class="phase-detail" id="ph0d">En attente</div>
+        </div>
+        <div class="phase-bar-wrap"><div class="phase-bar" id="ph0b"></div></div>
+      </div>
+      <div class="phase" id="ph1">
+        <div class="phase-icon">②</div>
+        <div class="phase-info">
+          <div class="phase-name">Synthèse vocale — Google Neural2</div>
+          <div class="phase-detail" id="ph1d">En attente</div>
+        </div>
+        <div class="phase-bar-wrap"><div class="phase-bar" id="ph1b"></div></div>
+      </div>
+      <div class="phase" id="ph2">
+        <div class="phase-icon">③</div>
+        <div class="phase-info">
+          <div class="phase-name">Assemblage audio</div>
+          <div class="phase-detail" id="ph2d">En attente</div>
+        </div>
+        <div class="phase-bar-wrap"><div class="phase-bar" id="ph2b"></div></div>
+      </div>
+      <div class="phase" id="ph3">
+        <div class="phase-icon">④</div>
+        <div class="phase-info">
+          <div class="phase-name">Encodage & téléchargement</div>
+          <div class="phase-detail" id="ph3d">En attente</div>
+        </div>
+        <div class="phase-bar-wrap"><div class="phase-bar" id="ph3b"></div></div>
+      </div>
+    </div>
+
+    <div class="log-wrap">
+      <div id="logLines"></div>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div id="resultPanel">
+    <div class="result-icon">🎉</div>
+    <div class="result-title">Livre audio prêt !</div>
+    <div class="result-sub" id="resultDesc">—</div>
+    <div class="download-btns">
+      <a id="dlMp3" class="btn-dl btn-dl-primary" download>⬇ Télécharger MP3</a>
+      <button class="btn-dl btn-dl-secondary" onclick="restartApp()">↩ Nouveau livre</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// VOICES
+// ─────────────────────────────────────────────────────────────────────────────
+const VOICES = [
+  { name:'fr-FR-Neural2-C', label:'Sophie',  gen:'Femme', type:'n2',  desc:'Chaleureuse & naturelle' },
+  { name:'fr-FR-Neural2-A', label:'Claire',  gen:'Femme', type:'n2',  desc:'Douce & narrative' },
+  { name:'fr-FR-Neural2-B', label:'Laurent', gen:'Homme', type:'n2',  desc:'Grave & posé' },
+  { name:'fr-FR-Neural2-D', label:'Thomas',  gen:'Homme', type:'n2',  desc:'Clair & moderne' },
+  { name:'fr-FR-Neural2-E', label:'Élise',   gen:'Femme', type:'n2',  desc:'Expressive' },
+  { name:'fr-FR-Wavenet-C', label:'Léa',     gen:'Femme', type:'wn',  desc:'WaveNet narratif' },
+  { name:'fr-FR-Wavenet-B', label:'Marc',    gen:'Homme', type:'wn',  desc:'WaveNet grave' },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+let gcpApiKey    = localStorage.getItem('epubson_gcp') || '';
+let claudeApiKey = localStorage.getItem('epubson_claude') || '';
+let selectedVoice = localStorage.getItem('epubson_voice') || 'fr-FR-Neural2-C';
+let chapters = [], bookMeta = {};
+let aborted = false;
+let allAudioBuffers = [];   // AudioBuffer[]
+let audioCtx = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────────────────
+document.getElementById('gcpKey').value    = gcpApiKey;
+document.getElementById('claudeKey').value = claudeApiKey;
+buildVoiceGrid();
+if (gcpApiKey && claudeApiKey) showStep2();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VOICE GRID
+// ─────────────────────────────────────────────────────────────────────────────
+function buildVoiceGrid() {
+  const grid = document.getElementById('voiceGrid');
+  grid.innerHTML = '';
+  VOICES.forEach(v => {
+    const d = document.createElement('div');
+    d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
+    d.innerHTML = `<div class="vc-name">${v.label} <span class="tag ${v.type}">${v.type === 'n2' ? 'Neural2' : 'WaveNet'}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
+    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); };
+    grid.appendChild(d);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KEYS VALIDATION
+// ─────────────────────────────────────────────────────────────────────────────
+function validateKeys() {
+  const gcp    = document.getElementById('gcpKey').value.trim();
+  const claude = document.getElementById('claudeKey').value.trim();
+  const msg    = document.getElementById('keysMsg');
+
+  if (!gcp || !claude) { msg.className='msg err'; msg.textContent='Entrez les deux clés.'; return; }
+  if (!gcp.startsWith('AIza')) { msg.className='msg err'; msg.textContent='✗ La clé Google doit commencer par AIza…'; return; }
+  if (!claude.startsWith('sk-ant-')) { msg.className='msg err'; msg.textContent='✗ La clé Anthropic doit commencer par sk-ant-…'; return; }
+
+  gcpApiKey    = gcp;
+  claudeApiKey = claude;
+  localStorage.setItem('epubson_gcp', gcp);
+  localStorage.setItem('epubson_claude', claude);
+  msg.className='msg ok'; msg.textContent='✓ Clés enregistrées — chargez votre ePub ci-dessous';
+  document.getElementById('voicePicker').style.display = 'block';
+  showStep2();
+}
+
+function showStep2() {
+  document.getElementById('voicePicker').style.display = 'block';
+  const dz = document.getElementById('dropzone');
+  dz.style.display = 'block'; dz.classList.add('fade-in');
+  setupDrop();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EPUB DROP
+// ─────────────────────────────────────────────────────────────────────────────
+function setupDrop() {
+  const dz = document.getElementById('dropzone');
+  const fi = document.getElementById('fileInput');
+  dz.addEventListener('click', () => fi.click());
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); loadEpub(e.dataTransfer.files[0]); });
+  fi.addEventListener('change', e => loadEpub(e.target.files[0]));
+}
+
+async function loadEpub(file) {
+  if (!file || !file.name.endsWith('.epub')) { alert('Fichier ePub requis.'); return; }
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const book = await parseEpub(zip);
+    bookMeta = book;
+    chapters = book.chapters;
+    showBookPreview(book);
+  } catch(e) {
+    console.error(e);
+    alert('Erreur de lecture du fichier ePub : ' + e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EPUB PARSE
+// ─────────────────────────────────────────────────────────────────────────────
+async function parseEpub(zip) {
+  const cxml = await zip.file('META-INF/container.xml').async('string');
+  const cdoc = new DOMParser().parseFromString(cxml, 'application/xml');
+  const opfPath = cdoc.querySelector('rootfile').getAttribute('full-path');
+  const opfDir  = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
+  const oxml    = await zip.file(opfPath).async('string');
+  const odoc    = new DOMParser().parseFromString(oxml, 'application/xml');
+
+  const title  = odoc.querySelector('metadata > *[*|name="title"],  dc\\:title,  title')?.textContent?.trim()  || 'Sans titre';
+  const author = odoc.querySelector('metadata > *[*|name="creator"], dc\\:creator, creator')?.textContent?.trim() || 'Auteur inconnu';
+
+  // Cover image
+  let coverUrl = null;
+  try {
+    const coverItem = odoc.querySelector('manifest item[id="cover-image"], manifest item[properties="cover-image"]');
+    if (coverItem) {
+      const href = coverItem.getAttribute('href');
+      const imgFile = zip.file(opfDir + href) || zip.file(href);
+      if (imgFile) {
+        const bytes = await imgFile.async('uint8array');
+        const blob  = new Blob([bytes], { type: 'image/jpeg' });
+        coverUrl = URL.createObjectURL(blob);
+      }
+    }
+  } catch(e) {}
+
+  const spineIds = [...odoc.querySelectorAll('spine itemref')].map(i => i.getAttribute('idref'));
+  const manifest = {};
+  odoc.querySelectorAll('manifest item').forEach(it => { manifest[it.getAttribute('id')] = it.getAttribute('href'); });
+
+  const chapters = [];
+  for (const id of spineIds) {
+    const href = manifest[id]; if (!href) continue;
+    const fobj = zip.file(opfDir + href) || zip.file(href); if (!fobj) continue;
+    const html  = await fobj.async('string');
+    const doc   = new DOMParser().parseFromString(html, 'text/html');
+    const chTitle = doc.querySelector('h1,h2,h3')?.textContent?.trim() || `Chapitre ${chapters.length + 1}`;
+    const text = extractText(doc.body).trim();
+    if (text.length > 80) chapters.push({ title: chTitle, text });
+  }
+
+  return { title, author, coverUrl, chapters };
+}
+
+function extractText(node) {
+  if (!node) return '';
+  let t = '';
+  for (const c of node.childNodes) {
+    if (c.nodeType === Node.TEXT_NODE) { t += c.textContent; }
+    else if (c.nodeType === Node.ELEMENT_NODE) {
+      const tag = c.tagName.toLowerCase();
+      if (['script','style','nav','aside','figure'].includes(tag)) continue;
+      const inner = extractText(c);
+      if (['p','h1','h2','h3','h4','li','div','br','tr'].includes(tag)) t += inner.trim() + '\n\n';
+      else t += inner;
+    }
+  }
+  return t;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOOK PREVIEW
+// ─────────────────────────────────────────────────────────────────────────────
+function showBookPreview(book) {
+  document.getElementById('bookName').textContent   = book.title;
+  document.getElementById('bookAuthorEl').textContent = book.author;
+
+  if (book.coverUrl) {
+    const img = document.createElement('img');
+    img.src = book.coverUrl;
+    const cover = document.getElementById('bookCover');
+    cover.innerHTML = '';
+    cover.appendChild(img);
+  }
+
+  const totalWords = book.chapters.reduce((a,c) => a + c.text.split(/\s+/).length, 0);
+  const estMin     = Math.round(totalWords / 130); // ~130 mots/min narration
+  document.getElementById('statChapters').textContent = book.chapters.length;
+  document.getElementById('statWords').textContent    = totalWords.toLocaleString('fr');
+  document.getElementById('statDuration').textContent = estMin;
+
+  const list = document.getElementById('chapterList');
+  list.innerHTML = '';
+  book.chapters.forEach((ch, i) => {
+    const wc = ch.text.split(/\s+/).length;
+    const el = document.createElement('div');
+    el.className = 'ch-item';
+    el.innerHTML = `
+      <input type="checkbox" id="ch${i}" checked>
+      <label for="ch${i}" class="ch-item-name">${ch.title}</label>
+      <span class="ch-item-words">${wc.toLocaleString('fr')} mots</span>`;
+    list.appendChild(el);
+  });
+
+  const prev = document.getElementById('bookPreview');
+  prev.style.display = 'flex'; prev.classList.add('fade-in');
+  const btn = document.getElementById('convertBtn');
+  btn.style.display = 'block'; btn.classList.add('fade-in');
+}
+
+function selectAll(val) {
+  document.querySelectorAll('#chapterList input[type=checkbox]').forEach(cb => cb.checked = val);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONVERSION
+// ─────────────────────────────────────────────────────────────────────────────
+async function startConversion() {
+  const selectedChapters = chapters.filter((_, i) => {
+    const cb = document.getElementById(`ch${i}`);
+    return cb && cb.checked;
+  });
+
+  if (selectedChapters.length === 0) { alert('Sélectionnez au moins un chapitre.'); return; }
+
+  aborted = false;
+  allAudioBuffers = [];
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  document.getElementById('convertBtn').style.display = 'none';
+  document.getElementById('abortBtn').style.display = 'block';
+  document.getElementById('progressPanel').style.display = 'block';
+  document.getElementById('progressPanel').classList.add('fade-in');
+
+  // Sentences for all chapters
+  const allSentences = [];
+  for (const ch of selectedChapters) {
+    const sents = ch.text
+      .split(/(?<=[.!?»…])\s+|(?<=\n)\s*/)
+      .map(s => s.replace(/\s+/g,' ').trim())
+      .filter(s => s.length > 4);
+    allSentences.push(...sents);
+  }
+
+  log(`📚 ${selectedChapters.length} chapitres · ${allSentences.length} phrases à synthétiser`,'hi');
+
+  const total   = allSentences.length;
+  const ssmlMap = {};
+  const mp3Map  = {};
+
+  // ── Phase 0 : SSML via Claude (par lots de 8) ────────────────────────────
+  setPhase(0,'active');
+  const BATCH = 8;
+  let ssmlDone = 0;
+
+  for (let i = 0; i < total; i += BATCH) {
+    if (aborted) { onAbort(); return; }
+    const batch = allSentences.slice(i, i + BATCH);
+    setPhaseDetail(0, `Lot ${Math.floor(i/BATCH)+1} / ${Math.ceil(total/BATCH)}`);
+
+    const results = await generateSSMLBatch(batch);
+    results.forEach((ssml, j) => { ssmlMap[i + j] = ssml; });
+
+    ssmlDone += batch.length;
+    setPhaseBar(0, ssmlDone / total * 100);
+    updateGlobal(ssmlDone / total * 0.4, `Analyse SSML : ${ssmlDone}/${total} phrases`);
+    log(`✓ SSML lot ${Math.floor(i/BATCH)+1} (phrases ${i+1}–${i+batch.length})`,'ok');
+  }
+
+  setPhase(0,'done');
+  log('✓ Toutes les analyses SSML terminées','ok');
+
+  // ── Phase 1 : TTS Google Neural2 ─────────────────────────────────────────
+  setPhase(1,'active');
+  let ttsDone = 0;
+  const CONCURRENCY = 4;
+
+  for (let i = 0; i < total; i += CONCURRENCY) {
+    if (aborted) { onAbort(); return; }
+    const slice = Array.from({ length: Math.min(CONCURRENCY, total - i) }, (_, j) => i + j);
+    await Promise.all(slice.map(async idx => {
+      const ssml = ssmlMap[idx] || `<speak>${escapeXml(allSentences[idx])}</speak>`;
+      mp3Map[idx] = await googleTTS(ssml);
+      ttsDone++;
+      setPhaseBar(1, ttsDone / total * 100);
+      setPhaseDetail(1, `${ttsDone}/${total} phrases synthétisées`);
+      updateGlobal(0.4 + ttsDone / total * 0.45, `Synthèse vocale : ${ttsDone}/${total}`);
+    }));
+    log(`🔊 Synthèse ${Math.min(i+CONCURRENCY,total)}/${total}`);
+  }
+
+  setPhase(1,'done');
+  log('✓ Synthèse vocale complète','ok');
+
+  // ── Phase 2 : Decode & assemble ──────────────────────────────────────────
+  setPhase(2,'active');
+  setPhaseDetail(2,'Décodage et assemblage des segments audio…');
+  log('🔧 Assemblage des buffers audio…','hi');
+
+  const buffers = [];
+  let totalSamples = 0;
+  let sampleRate = 24000;
+
+  for (let i = 0; i < total; i++) {
+    if (aborted) { onAbort(); return; }
+    const mp3Bytes = mp3Map[i];
+    const audioBuf = await audioCtx.decodeAudioData(mp3Bytes.slice(0));
+    buffers.push(audioBuf);
+    sampleRate = audioBuf.sampleRate;
+    totalSamples += audioBuf.length;
+    if (i % 20 === 0) {
+      setPhaseBar(2, i / total * 100);
+      updateGlobal(0.85 + i / total * 0.1, `Assemblage : ${i+1}/${total}`);
+    }
+  }
+
+  setPhaseBar(2, 100);
+  log(`✓ ${buffers.length} segments décodés — assemblage final…`,'ok');
+
+  // Merge into one AudioBuffer
+  const merged = audioCtx.createBuffer(1, totalSamples, sampleRate);
+  const outData = merged.getChannelData(0);
+  let offset = 0;
+  for (const buf of buffers) {
+    outData.set(buf.getChannelData(0), offset);
+    offset += buf.length;
+  }
+
+  const durationMin = Math.round(totalSamples / sampleRate / 60);
+  log(`✓ Durée totale : ${durationMin} minutes`,'ok');
+  setPhase(2,'done');
+
+  // ── Phase 3 : Encode to WAV & download ───────────────────────────────────
+  setPhase(3,'active');
+  setPhaseDetail(3,'Encodage WAV…');
+  updateGlobal(0.96, 'Encodage final…');
+  log('📦 Encodage en fichier audio…','hi');
+
+  const wavBlob = audioBufferToWav(merged);
+  const url     = URL.createObjectURL(wavBlob);
+  const sizeMB  = (wavBlob.size / 1024 / 1024).toFixed(1);
+
+  setPhase(3,'done');
+  updateGlobal(1, 'Terminé !');
+  log(`✓ Fichier prêt — ${sizeMB} Mo, ${durationMin} min`,'ok');
+
+  document.getElementById('abortBtn').style.display = 'none';
+  showResult(url, bookMeta.title, durationMin, sizeMB, total);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLAUDE SSML BATCH
+// ─────────────────────────────────────────────────────────────────────────────
+async function generateSSMLBatch(sentences) {
+  const prompt = `Tu es un expert en lectures de livres audio en français pour Google Cloud TTS.
+
+Transforme chaque phrase numérotée en SSML valide (balises supportées : <break time="Xms"/>, <emphasis level="strong|moderate|reduced">, <prosody rate="X%" pitch="Xst">).
+
+Règles :
+- Virgule → <break time="160ms"/>, point-virgule/deux-points → <break time="250ms"/>, point → <break time="0ms"/> (la pause vient naturellement), tiret/incise → <break time="180ms"/>
+- Questions : dernier groupe <prosody pitch="+3st">
+- Exclamations : <prosody rate="106%" pitch="+2st"> sur le groupe exclamatif
+- Dialogues guillemets/tirets : adapte le ton
+- Mots forts : <emphasis level="moderate">
+- Descriptions lentes : <prosody rate="92%">
+- Chaque phrase DOIT être encapsulée dans <speak>…</speak>
+- Retourne UNIQUEMENT un tableau JSON : [{"i":0,"ssml":"<speak>…</speak>"},…]
+- Aucun texte autour, aucun markdown
+
+Phrases :
+${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'x-api-key': claudeApiKey, 'anthropic-version':'2023-06-01' },
+      body: JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:2000,
+        messages:[{role:'user', content:prompt}]
+      })
+    });
+    const data = await resp.json();
+    const raw  = data.content?.map(c=>c.text||'').join('') || '';
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('No JSON');
+    const arr = JSON.parse(match[0]);
+    return sentences.map((s, i) => {
+      const found = arr.find(x => x.i === i);
+      return found?.ssml || `<speak>${escapeXml(s)}</speak>`;
+    });
+  } catch(e) {
+    console.error('Claude SSML error:', e);
+    return sentences.map(s => `<speak>${escapeXml(s)}</speak>`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOOGLE TTS
+// ─────────────────────────────────────────────────────────────────────────────
+async function googleTTS(ssml, retries = 3) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${gcpApiKey}`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          input:{ ssml },
+          voice:{ languageCode:'fr-FR', name: selectedVoice },
+          audioConfig:{
+            audioEncoding:'MP3',
+            speakingRate:1.0,
+            pitch:0,
+            effectsProfileId:['headphone-class-device']
+          }
+        })
+      });
+      if (!resp.ok) {
+        const e = await resp.json();
+        throw new Error(e.error?.message || 'TTS error');
+      }
+      const data  = await resp.json();
+      const bytes = Uint8Array.from(atob(data.audioContent), c => c.charCodeAt(0));
+      return bytes.buffer;
+    } catch(e) {
+      if (attempt === retries - 1) throw e;
+      log(`⚠ Retry ${attempt+1} — ${e.message}`,'err');
+      await sleep(1000 * (attempt + 1));
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAV ENCODER
+// ─────────────────────────────────────────────────────────────────────────────
+function audioBufferToWav(buffer) {
+  const numChannels = 1;
+  const sampleRate  = buffer.sampleRate;
+  const format      = 1; // PCM
+  const bitDepth    = 16;
+  const data        = buffer.getChannelData(0);
+  const samples     = new Int16Array(data.length);
+
+  for (let i = 0; i < data.length; i++) {
+    const s = Math.max(-1, Math.min(1, data[i]));
+    samples[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+
+  const dataLength   = samples.length * 2;
+  const bufferLength = 44 + dataLength;
+  const ab           = new ArrayBuffer(bufferLength);
+  const view         = new DataView(ab);
+
+  const writeStr = (offset, str) => { for (let i=0;i<str.length;i++) view.setUint8(offset+i, str.charCodeAt(i)); };
+
+  writeStr(0, 'RIFF');
+  view.setUint32(4,  36 + dataLength, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * bitDepth / 8, true);
+  view.setUint16(32, numChannels * bitDepth / 8, true);
+  view.setUint16(34, bitDepth, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  const dataView = new Int16Array(ab, 44);
+  dataView.set(samples);
+
+  return new Blob([ab], { type:'audio/wav' });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+function setPhase(idx, state) {
+  const el = document.getElementById(`ph${idx}`);
+  el.className = 'phase ' + state;
+  const icons = ['⟳','⟳','⟳','⟳'];
+  const done  = ['✓','✓','✓','✓'];
+  el.querySelector('.phase-icon').textContent =
+    state === 'done' ? done[idx] : state === 'error' ? '✕' : icons[idx];
+}
+
+function setPhaseDetail(idx, txt) { document.getElementById(`ph${idx}d`).textContent = txt; }
+function setPhaseBar(idx, pct)    { document.getElementById(`ph${idx}b`).style.width = pct + '%'; }
+
+function updateGlobal(ratio, label) {
+  const pct = Math.round(ratio * 100);
+  document.getElementById('progPct').textContent = pct + '%';
+  document.getElementById('progBar').style.width = pct + '%';
+  document.getElementById('progSub').textContent = label;
+}
+
+function log(msg, cls='') {
+  const el = document.createElement('div');
+  el.className = 'log-line ' + cls;
+  el.textContent = msg;
+  const logLines = document.getElementById('logLines');
+  logLines.appendChild(el);
+  logLines.parentElement.scrollTop = logLines.parentElement.scrollHeight;
+}
+
+function showResult(url, title, durationMin, sizeMB, sentenceCount) {
+  document.getElementById('progressPanel').style.display = 'none';
+  const panel = document.getElementById('resultPanel');
+  panel.style.display = 'block'; panel.classList.add('fade-in');
+
+  document.getElementById('resultDesc').innerHTML =
+    `<strong>${title}</strong><br>${sentenceCount.toLocaleString('fr')} phrases · ${durationMin} minutes · ${sizeMB} Mo<br>
+    <span style="color:var(--ink-dim);font-size:11px">Fichier WAV · Voix ${selectedVoice} · Google Neural2</span>`;
+
+  const dl = document.getElementById('dlMp3');
+  dl.href = url;
+  dl.download = (title || 'livre-audio').replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'') + '.wav';
+  dl.textContent = `⬇ Télécharger WAV (${sizeMB} Mo)`;
+}
+
+function restartApp() {
+  location.reload();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ABORT
+// ─────────────────────────────────────────────────────────────────────────────
+function abortConversion() {
+  if (confirm('Annuler la conversion en cours ?')) { aborted = true; }
+}
+
+function onAbort() {
+  document.getElementById('abortBtn').style.display = 'none';
+  document.getElementById('convertBtn').style.display = 'block';
+  log('✕ Conversion annulée par l\'utilisateur','err');
+  updateGlobal(0, 'Annulé');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UTILS
+// ─────────────────────────────────────────────────────────────────────────────
+function escapeXml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
