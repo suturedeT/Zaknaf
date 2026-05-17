@@ -842,57 +842,48 @@ async function startConversion() {
   setPhase(1,'done');
   log('✓ Synthèse vocale complète','ok');
 
-  // ── Phase 2 : Decode & assemble ──────────────────────────────────────────
+  // ── Phase 2 : Concaténation MP3 directe (sans décodage PCM) ────────────
   setPhase(2,'active');
-  setPhaseDetail(2,'Décodage et assemblage des segments audio…');
-  log('🔧 Assemblage des buffers audio…','hi');
+  setPhaseDetail(2,'Concaténation des segments MP3…');
+  log('🔧 Assemblage MP3 direct (léger, sans décodage)…','hi');
 
-  const buffers = [];
-  let totalSamples = 0;
-  let sampleRate = 24000;
+  let totalBytes = 0;
+  for (let i = 0; i < total; i++) if (mp3Map[i]) totalBytes += mp3Map[i].byteLength;
 
+  const mergedMp3 = new Uint8Array(totalBytes);
+  let mp3Offset = 0;
   for (let i = 0; i < total; i++) {
     if (aborted) { onAbort(); return; }
-    const mp3Bytes = mp3Map[i];
-    const audioBuf = await audioCtx.decodeAudioData(mp3Bytes.slice(0));
-    buffers.push(audioBuf);
-    sampleRate = audioBuf.sampleRate;
-    totalSamples += audioBuf.length;
-    if (i % 20 === 0) {
+    if (mp3Map[i]) {
+      mergedMp3.set(new Uint8Array(mp3Map[i]), mp3Offset);
+      mp3Offset += mp3Map[i].byteLength;
+      mp3Map[i] = null; // libère la mémoire immédiatement
+    }
+    if (i % 200 === 0) {
       setPhaseBar(2, i / total * 100);
       updateGlobal(0.85 + i / total * 0.1, `Assemblage : ${i+1}/${total}`);
+      await sleep(0);
     }
   }
 
   setPhaseBar(2, 100);
-  log(`✓ ${buffers.length} segments décodés — assemblage final…`,'ok');
-
-  // Merge into one AudioBuffer
-  const merged = audioCtx.createBuffer(1, totalSamples, sampleRate);
-  const outData = merged.getChannelData(0);
-  let offset = 0;
-  for (const buf of buffers) {
-    outData.set(buf.getChannelData(0), offset);
-    offset += buf.length;
-  }
-
-  const durationMin = Math.round(totalSamples / sampleRate / 60);
-  log(`✓ Durée totale : ${durationMin} minutes`,'ok');
+  const sizeMB = (totalBytes / 1024 / 1024).toFixed(1);
+  const durationMin = Math.round(totalBytes / (16000) / 60); // ~128kbps
+  log(`✓ Assemblage terminé — ${sizeMB} Mo (~${durationMin} min)`,'ok');
   setPhase(2,'done');
 
-  // ── Phase 3 : Encode to WAV & download ───────────────────────────────────
+  // ── Phase 3 : Téléchargement MP3 ─────────────────────────────────────────
   setPhase(3,'active');
-  setPhaseDetail(3,'Encodage WAV…');
-  updateGlobal(0.96, 'Encodage final…');
-  log('📦 Encodage en fichier audio…','hi');
+  setPhaseDetail(3,'Création du fichier MP3…');
+  updateGlobal(0.97, 'Finalisation…');
+  log('📦 Création du fichier MP3…','hi');
 
-  const wavBlob = audioBufferToWav(merged);
-  const url     = URL.createObjectURL(wavBlob);
-  const sizeMB  = (wavBlob.size / 1024 / 1024).toFixed(1);
+  const blob = new Blob([mergedMp3], { type: 'audio/mpeg' });
+  const url  = URL.createObjectURL(blob);
 
   setPhase(3,'done');
   updateGlobal(1, 'Terminé !');
-  log(`✓ Fichier prêt — ${sizeMB} Mo, ${durationMin} min`,'ok');
+  log(`✓ Fichier MP3 prêt — ${sizeMB} Mo`,'ok');
 
   document.getElementById('abortBtn').style.display = 'none';
   showResult(url, bookMeta.title, durationMin, sizeMB, total);
@@ -1065,8 +1056,8 @@ function showResult(url, title, durationMin, sizeMB, sentenceCount) {
 
   const dl = document.getElementById('dlMp3');
   dl.href = url;
-  dl.download = (title || 'livre-audio').replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'') + '.wav';
-  dl.textContent = `⬇ Télécharger WAV (${sizeMB} Mo)`;
+  dl.download = (title || 'livre-audio').replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'') + '.mp3';
+  dl.textContent = `⬇ Télécharger MP3 (${sizeMB} Mo)`;
 }
 
 function restartApp() {
