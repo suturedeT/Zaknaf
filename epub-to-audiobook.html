@@ -527,7 +527,7 @@ header {
       <div class="phase" id="ph3">
         <div class="phase-icon">④</div>
         <div class="phase-info">
-          <div class="phase-name">Encodage & téléchargement</div>
+          <div class="phase-name">Encodage M4B & téléchargement</div>
           <div class="phase-detail" id="ph3d">En attente</div>
         </div>
         <div class="phase-bar-wrap"><div class="phase-bar" id="ph3b"></div></div>
@@ -915,46 +915,114 @@ async function startConversion() {
   log(`✓ Décodage terminé — ${Object.keys(chapterPcm).length} chapitres prêts`,'ok');
   setPhase(2,'done');
 
-  // ── Phase 3 : Encodage WAV chapitre par chapitre + téléchargement ────────
+  // ── Phase 3 : Encodage M4B (AAC + marqueurs de chapitres iOS Books) ────────
   setPhase(3,'active');
   const chIndices = Object.keys(chapterPcm).map(Number).sort((a,b) => a-b);
-  const resultFiles = [];
+
+  async function encodeWavFallback() {
+    log('⚠ WebCodecs absent — export WAV numérotés (Safari < 16.4)','err');
+    const resultFiles = [];
+    let chDone = 0;
+    for (const ci of chIndices) {
+      if (aborted) { onAbort(); return; }
+      const { segments, totalSamples, sampleRate, title } = chapterPcm[ci];
+      const gap = Math.floor(sampleRate * 0.015);
+      const gapBuf = new Float32Array(gap);
+      const merged = new Float32Array(totalSamples + gap * segments.length);
+      let off = 0;
+      for (const seg of segments) { merged.set(seg, off); off += seg.length; merged.set(gapBuf, off); off += gap; }
+      const blob = pcmToWav(merged, sampleRate);
+      const url = URL.createObjectURL(blob);
+      const sizeMB = (blob.size/1024/1024).toFixed(1);
+      const durMin = Math.round(merged.length/sampleRate/60);
+      resultFiles.push({ url, title, sizeMB, durMin, ext:'wav' });
+      chapterPcm[ci].segments = [];
+      chDone++;
+      setPhaseBar(3, chDone/chIndices.length*100);
+      updateGlobal(0.95+chDone/chIndices.length*0.05, `WAV ${chDone}/${chIndices.length}`);
+      log(`✓ ${title} — ${sizeMB} Mo`,'ok');
+      await sleep(0);
+    }
+    setPhase(3,'done'); updateGlobal(1,'Terminé !');
+    document.getElementById('abortBtn').style.display = 'none';
+    showResult(resultFiles, bookMeta.title, total);
+  }
+
+  if (typeof AudioEncoder === 'undefined' || typeof AudioData === 'undefined') {
+    await encodeWavFallback(); return;
+  }
+
+  setPhaseDetail(3,'Chargement encodeur AAC…');
+  log('📦 Création du livre audio M4B avec marqueurs de chapitres…','hi');
+
+  let Muxer, ArrayBufferTarget;
+  try {
+    ({ Muxer, ArrayBufferTarget } = await import('https://esm.sh/mp4-muxer@5'));
+  } catch(e) {
+    log(`⚠ mp4-muxer indisponible — fallback WAV`,'err');
+    await encodeWavFallback(); return;
+  }
+
+  const outRate = chapterPcm[chIndices[0]]?.sampleRate || 24000;
+  const target  = new ArrayBufferTarget();
+  const muxer   = new Muxer({ target, audio:{ codec:'aac', sampleRate:outRate, numberOfChannels:1 }, fastStart:'in-memory' });
+
+  const chapterMarkers = [];
+  let currentUs = 0;
+
+  const aacEncoder = new AudioEncoder({
+    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    error: e => log(`⚠ AAC: ${e.message}`,'err')
+  });
+  aacEncoder.configure({ codec:'mp4a.40.2', sampleRate:outRate, numberOfChannels:1, bitrate:96000 });
+
   let chDone = 0;
-
   for (const ci of chIndices) {
-    if (aborted) { onAbort(); return; }
-    const { segments, totalSamples, sampleRate, title } = chapterPcm[ci];
-    setPhaseDetail(3, `Chapitre ${chDone+1}/${chIndices.length} — ${title}`);
-    log(`📦 Encodage : ${title}…`,'hi');
+    if (aborted) { aacEncoder.close(); onAbort(); return; }
+    const { segments, sampleRate, title } = chapterPcm[ci];
 
-    const outRate   = sampleRate;
-    const gapSamples = Math.floor(outRate * 0.015);
-    const gapBuf    = new Float32Array(gapSamples);
-    const merged    = new Float32Array(totalSamples + gapSamples * segments.length);
-    let offset = 0;
-    for (const seg of segments) {
-      merged.set(seg, offset); offset += seg.length;
-      merged.set(gapBuf, offset); offset += gapSamples;
+    chapterMarkers.push({ timestamp: currentUs, title });
+    setPhaseDetail(3, `${chDone+1}/${chIndices.length} — ${title}`);
+    log(`🎵 Encodage AAC : ${title}…`,'hi');
+
+    const gap = Math.floor(sampleRate * 0.015);
+    const totalSeg = segments.reduce((a,s) => a + s.length, 0);
+    const merged = new Float32Array(totalSeg + gap * segments.length);
+    let off = 0;
+    for (const seg of segments) { merged.set(seg, off); off += seg.length + gap; }
+
+    const CHUNK = 4096;
+    for (let i = 0; i < merged.length; i += CHUNK) {
+      const slice = merged.subarray(i, Math.min(i + CHUNK, merged.length));
+      const tsUs = currentUs + Math.round(i / sampleRate * 1e6);
+      const ad = new AudioData({ format:'f32', sampleRate, numberOfChannels:1, numberOfFrames:slice.length, timestamp:tsUs, data:slice });
+      aacEncoder.encode(ad);
+      ad.close();
     }
 
-    const wavBlob = pcmToWav(merged, outRate);
-    const url     = URL.createObjectURL(wavBlob);
-    const sizeMB  = (wavBlob.size / 1024 / 1024).toFixed(1);
-    const durMin  = Math.round(merged.length / outRate / 60);
-    resultFiles.push({ url, title, sizeMB, durMin });
-
-    chapterPcm[ci].segments = []; // libère la mémoire
+    currentUs += Math.round(merged.length / sampleRate * 1e6);
+    chapterPcm[ci].segments = [];
     chDone++;
-    setPhaseBar(3, chDone / chIndices.length * 100);
-    updateGlobal(0.95 + chDone / chIndices.length * 0.05, `Encodage ${chDone}/${chIndices.length}`);
-    log(`✓ ${title} — ${sizeMB} Mo (~${durMin} min)`,'ok');
+    setPhaseBar(3, chDone/chIndices.length*100);
+    updateGlobal(0.95+chDone/chIndices.length*0.04, `M4B ${chDone}/${chIndices.length}`);
     await sleep(0);
   }
 
+  await aacEncoder.flush();
+  muxer.finalize();
+
+  const m4bBuf = injectChapters(muxer.target.buffer, chapterMarkers);
+  const blob   = new Blob([m4bBuf], { type:'audio/mp4' });
+  const url    = URL.createObjectURL(blob);
+  const sizeMB = (blob.size/1024/1024).toFixed(1);
+  const durMin = Math.round(currentUs/1e6/60);
+
   setPhase(3,'done');
-  updateGlobal(1, 'Terminé !');
+  updateGlobal(1,'Terminé !');
+  log(`✓ M4B prêt — ${sizeMB} Mo (~${durMin} min) · ${chIndices.length} chapitres`,'ok');
+
   document.getElementById('abortBtn').style.display = 'none';
-  showResult(resultFiles, bookMeta.title, total);
+  showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'m4b' }], bookMeta.title, total);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1125,21 +1193,27 @@ function showResult(files, bookTitle, sentenceCount) {
   const totalMin  = files.reduce((a,f) => a + f.durMin, 0);
   const totalSize = files.reduce((a,f) => a + parseFloat(f.sizeMB), 0).toFixed(1);
 
+  const isSingle = files.length === 1;
+  const fmt = isSingle
+    ? `${(files[0].ext||'wav').toUpperCase()} · livre audio complet · chapitres intégrés`
+    : `${files.length} fichiers WAV numérotés`;
+
   document.getElementById('resultDesc').innerHTML =
     `<strong>${bookTitle}</strong><br>${sentenceCount.toLocaleString('fr')} blocs · ${totalMin} min · ${totalSize} Mo<br>
-    <span style="color:var(--ink-dim);font-size:11px">Voix ${selectedVoice} · Google Neural2 · ${files.length} fichier(s) WAV</span>`;
+    <span style="color:var(--ink-dim);font-size:11px">Voix ${selectedVoice} · Google Neural2 · ${fmt}</span>`;
 
   const btns = document.getElementById('downloadBtns');
   btns.innerHTML = '';
   files.forEach((f, i) => {
     const safe = (f.title || `chapitre-${i+1}`).replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'');
+    const ext  = f.ext || 'wav';
     const num  = String(i + 1).padStart(2, '0');
     const a = document.createElement('a');
     a.className = 'btn-dl btn-dl-primary';
     a.href = f.url;
-    a.download = `${num} - ${safe}.wav`;
-    a.textContent = files.length === 1
-      ? `⬇ Télécharger WAV (${f.sizeMB} Mo)`
+    a.download = isSingle ? `${safe}.${ext}` : `${num} - ${safe}.${ext}`;
+    a.textContent = isSingle
+      ? `⬇ Télécharger ${ext.toUpperCase()} (${f.sizeMB} Mo)`
       : `⬇ ${f.title} (${f.sizeMB} Mo)`;
     btns.appendChild(a);
   });
@@ -1167,6 +1241,59 @@ function onAbort() {
   document.getElementById('convertBtn').style.display = 'block';
   log('✕ Conversion annulée par l\'utilisateur','err');
   updateGlobal(0, 'Annulé');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INJECT CHAPTERS (chpl atom iTunes → iOS Books navigation)
+// ─────────────────────────────────────────────────────────────────────────────
+function injectChapters(mp4Buffer, chapters) {
+  const enc = new TextEncoder();
+
+  function buildChpl() {
+    const entries = chapters.map(ch => ({ ts: Math.round(ch.timestamp * 10), tb: enc.encode(ch.title.slice(0,255)) }));
+    const dataSize = entries.reduce((a,e) => a + 9 + e.tb.length, 0);
+    const buf = new Uint8Array(12 + 4 + dataSize);
+    const v = new DataView(buf.buffer); let o = 0;
+    v.setUint32(o, buf.length, false); o += 4;
+    buf.set([0x63,0x68,0x70,0x6C], o); o += 4; // 'chpl'
+    o += 4; // version=0, flags=0
+    v.setUint32(o, entries.length, false); o += 4;
+    for (const e of entries) {
+      v.setUint32(o, Math.floor(e.ts/0x100000000), false); o += 4;
+      v.setUint32(o, e.ts>>>0, false); o += 4;
+      buf[o++] = e.tb.length;
+      buf.set(e.tb, o); o += e.tb.length;
+    }
+    return buf;
+  }
+
+  const src = new Uint8Array(mp4Buffer);
+  function u32(b,o) { return ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0; }
+  function setU32(b,o,n) { b[o]=(n>>24)&0xFF; b[o+1]=(n>>16)&0xFF; b[o+2]=(n>>8)&0xFF; b[o+3]=n&0xFF; }
+  function findBox(data,s,e,t) {
+    const c=[...t].map(x=>x.charCodeAt(0)); let i=s;
+    while(i+8<=e){const n=u32(data,i);if(n<8)break;if(data[i+4]===c[0]&&data[i+5]===c[1]&&data[i+6]===c[2]&&data[i+7]===c[3])return i;i+=n;}
+    return -1;
+  }
+
+  const chpl = buildChpl();
+  const moovOff = findBox(src, 0, src.length, 'moov');
+  if (moovOff === -1) return mp4Buffer;
+  const moovSize = u32(src, moovOff);
+
+  // Crée udta contenant chpl et l'insère à la fin de moov
+  const udta = new Uint8Array(8 + chpl.length);
+  setU32(udta, 0, udta.length);
+  udta.set([0x75,0x64,0x74,0x61], 4); // 'udta'
+  udta.set(chpl, 8);
+
+  const insertAt = moovOff + moovSize;
+  const out = new Uint8Array(src.length + udta.length);
+  out.set(src.subarray(0, insertAt));
+  out.set(udta, insertAt);
+  out.set(src.subarray(insertAt), insertAt + udta.length);
+  setU32(out, moovOff, moovSize + udta.length);
+  return out.buffer;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
