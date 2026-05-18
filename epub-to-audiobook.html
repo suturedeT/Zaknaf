@@ -544,10 +544,7 @@ header {
     <div class="result-icon">🎉</div>
     <div class="result-title">Livre audio prêt !</div>
     <div class="result-sub" id="resultDesc">—</div>
-    <div class="download-btns">
-      <a id="dlMp3" class="btn-dl btn-dl-primary" download>⬇ Télécharger MP3</a>
-      <button class="btn-dl btn-dl-secondary" onclick="restartApp()">↩ Nouveau livre</button>
-    </div>
+    <div class="download-btns" id="downloadBtns"></div>
   </div>
 
 </div>
@@ -783,32 +780,31 @@ async function startConversion() {
   document.getElementById('progressPanel').classList.add('fade-in');
 
   // Segmentation en blocs de lecture naturels (paragraphes / 300 mots max)
-  // Évite les micro-segments qui génèrent des silences de tête/queue TTS en cascade
-  const allSentences = [];
-  for (const ch of selectedChapters) {
+  // Chaque phrase conserve son index de chapitre pour l'encodage par chapitre
+  const allSentences = []; // { text, chIdx, chTitle }
+  for (let ci = 0; ci < selectedChapters.length; ci++) {
+    const ch = selectedChapters[ci];
     const paragraphs = ch.text
       .split(/\n{2,}/)
       .map(p => p.replace(/\s+/g,' ').trim())
       .filter(p => p.length > 10);
 
     for (const para of paragraphs) {
-      // Si le paragraphe est court (<= 300 chars), on l'envoie tel quel
       if (para.length <= 300) {
-        allSentences.push(para);
+        allSentences.push({ text: para, chIdx: ci, chTitle: ch.title });
         continue;
       }
-      // Sinon on coupe aux frontières de phrases tout en groupant les phrases courtes
       const raw = para.split(/(?<=[.!?»…])\s+/).map(s => s.trim()).filter(s => s.length > 3);
       let buf = '';
       for (const s of raw) {
         if ((buf + ' ' + s).trim().length > 280 && buf.length > 0) {
-          allSentences.push(buf.trim());
+          allSentences.push({ text: buf.trim(), chIdx: ci, chTitle: ch.title });
           buf = s;
         } else {
           buf = buf ? buf + ' ' + s : s;
         }
       }
-      if (buf.trim().length > 3) allSentences.push(buf.trim());
+      if (buf.trim().length > 3) allSentences.push({ text: buf.trim(), chIdx: ci, chTitle: ch.title });
     }
   }
 
@@ -825,7 +821,7 @@ async function startConversion() {
 
   for (let i = 0; i < total; i += BATCH) {
     if (aborted) { onAbort(); return; }
-    const batch = allSentences.slice(i, i + BATCH);
+    const batch = allSentences.slice(i, i + BATCH).map(s => s.text);
     setPhaseDetail(0, `Lot ${Math.floor(i/BATCH)+1} / ${Math.ceil(total/BATCH)}`);
 
     const results = await generateSSMLBatch(batch);
@@ -849,7 +845,7 @@ async function startConversion() {
     if (aborted) { onAbort(); return; }
     const slice = Array.from({ length: Math.min(CONCURRENCY, total - i) }, (_, j) => i + j);
     await Promise.all(slice.map(async idx => {
-      const ssml = ssmlMap[idx] || `<speak>${escapeXml(allSentences[idx])}</speak>`;
+      const ssml = ssmlMap[idx] || `<speak>${escapeXml(allSentences[idx].text)}</speak>`;
       mp3Map[idx] = await googleTTS(ssml);
       ttsDone++;
       setPhaseBar(1, ttsDone / total * 100);
@@ -862,42 +858,39 @@ async function startConversion() {
   setPhase(1,'done');
   log('✓ Synthèse vocale complète','ok');
 
-  // ── Phase 2 : Décodage PCM + trim silences + assemblage fluide ──────────
+  // ── Phase 2 : Décodage PCM + trim silences + groupement par chapitre ─────
   setPhase(2,'active');
   setPhaseDetail(2,'Décodage et assemblage audio…');
-  log('🔧 Assemblage avec suppression des silences inter-segments…','hi');
+  log('🔧 Décodage par chapitre (évite les problèmes mémoire)…','hi');
 
-  // Décode chaque MP3 en PCM et trim les silences de tête/queue
-  const SILENCE_THRESHOLD = 0.003; // amplitude sous laquelle on considère un silence
-  const pcmSegments = [];
-  let totalSamples = 0;
+  const SILENCE_THRESHOLD = 0.003;
+  // chapterPcm[chIdx] = { segments: Float32Array[], totalSamples, sampleRate, title }
+  const chapterPcm = {};
 
   for (let i = 0; i < total; i++) {
     if (aborted) { onAbort(); return; }
     if (!mp3Map[i]) continue;
+
+    const chIdx   = allSentences[i].chIdx;
+    const chTitle = allSentences[i].chTitle;
+    if (!chapterPcm[chIdx]) chapterPcm[chIdx] = { segments: [], totalSamples: 0, sampleRate: 24000, title: chTitle };
 
     try {
       const decoded = await audioCtx.decodeAudioData(mp3Map[i]);
       mp3Map[i] = null;
       const raw = decoded.getChannelData(0);
       const sr  = decoded.sampleRate;
+      chapterPcm[chIdx].sampleRate = sr;
 
-      // Trim silence en tête
       let start = 0;
       while (start < raw.length && Math.abs(raw[start]) < SILENCE_THRESHOLD) start++;
-
-      // Trim silence en queue — garde 25ms de queue naturelle
       const keepTail = Math.floor(sr * 0.025);
       let end = raw.length - 1;
       while (end > start && Math.abs(raw[end]) < SILENCE_THRESHOLD) end--;
       end = Math.min(end + keepTail, raw.length - 1);
-
-      // Garde-fou : si le trim a tout mangé (segment quasi silencieux), on saute
       if (end - start < sr * 0.02) continue;
 
       const trimmed = raw.slice(start, end + 1);
-
-      // Fondu entrée/sortie de 5ms pour supprimer les clics aux jonctions
       const fade = Math.min(Math.floor(sr * 0.005), Math.floor(trimmed.length / 2));
       for (let f = 0; f < fade; f++) {
         const g = f / fade;
@@ -905,8 +898,8 @@ async function startConversion() {
         trimmed[trimmed.length - 1 - f] *= g;
       }
 
-      pcmSegments.push({ data: trimmed, sampleRate: sr });
-      totalSamples += trimmed.length;
+      chapterPcm[chIdx].segments.push(trimmed);
+      chapterPcm[chIdx].totalSamples += trimmed.length;
     } catch(e) {
       log(`⚠ Segment ${i} non décodable, ignoré`,'err');
     }
@@ -919,41 +912,49 @@ async function startConversion() {
   }
 
   setPhaseBar(2, 100);
-  log(`✓ ${pcmSegments.length} segments décodés et nettoyés`,'ok');
+  log(`✓ Décodage terminé — ${Object.keys(chapterPcm).length} chapitres prêts`,'ok');
   setPhase(2,'done');
 
-  // ── Phase 3 : Encodage WAV et téléchargement ──────────────────────────
+  // ── Phase 3 : Encodage WAV chapitre par chapitre + téléchargement ────────
   setPhase(3,'active');
-  setPhaseDetail(3,'Encodage WAV…');
-  updateGlobal(0.95, 'Finalisation…');
-  log('📦 Encodage du fichier audio final…','hi');
+  const chIndices = Object.keys(chapterPcm).map(Number).sort((a,b) => a-b);
+  const resultFiles = [];
+  let chDone = 0;
 
-  // Assemblage PCM avec micro-pause naturelle entre blocs (15ms)
-  const outRate = pcmSegments[0]?.sampleRate || 24000;
-  const gapSamples = Math.floor(outRate * 0.015); // 15ms de silence inter-bloc
-  const gapBuf = new Float32Array(gapSamples); // zéros
+  for (const ci of chIndices) {
+    if (aborted) { onAbort(); return; }
+    const { segments, totalSamples, sampleRate, title } = chapterPcm[ci];
+    setPhaseDetail(3, `Chapitre ${chDone+1}/${chIndices.length} — ${title}`);
+    log(`📦 Encodage : ${title}…`,'hi');
 
-  const merged = new Float32Array(totalSamples + gapSamples * pcmSegments.length);
-  let offset = 0;
-  for (const seg of pcmSegments) {
-    merged.set(seg.data, offset);
-    offset += seg.data.length;
-    merged.set(gapBuf, offset);
-    offset += gapSamples;
+    const outRate   = sampleRate;
+    const gapSamples = Math.floor(outRate * 0.015);
+    const gapBuf    = new Float32Array(gapSamples);
+    const merged    = new Float32Array(totalSamples + gapSamples * segments.length);
+    let offset = 0;
+    for (const seg of segments) {
+      merged.set(seg, offset); offset += seg.length;
+      merged.set(gapBuf, offset); offset += gapSamples;
+    }
+
+    const wavBlob = pcmToWav(merged, outRate);
+    const url     = URL.createObjectURL(wavBlob);
+    const sizeMB  = (wavBlob.size / 1024 / 1024).toFixed(1);
+    const durMin  = Math.round(merged.length / outRate / 60);
+    resultFiles.push({ url, title, sizeMB, durMin });
+
+    chapterPcm[ci].segments = []; // libère la mémoire
+    chDone++;
+    setPhaseBar(3, chDone / chIndices.length * 100);
+    updateGlobal(0.95 + chDone / chIndices.length * 0.05, `Encodage ${chDone}/${chIndices.length}`);
+    log(`✓ ${title} — ${sizeMB} Mo (~${durMin} min)`,'ok');
+    await sleep(0);
   }
-
-  // Encoder en WAV
-  const wavBlob = pcmToWav(merged, outRate);
-  const url = URL.createObjectURL(wavBlob);
-  const sizeMB = (wavBlob.size / 1024 / 1024).toFixed(1);
-  const durationMin = Math.round(merged.length / outRate / 60);
 
   setPhase(3,'done');
   updateGlobal(1, 'Terminé !');
-  log(`✓ Fichier audio prêt — ${sizeMB} Mo (~${durationMin} min)`,'ok');
-
   document.getElementById('abortBtn').style.display = 'none';
-  showResult(url, bookMeta.title, durationMin, sizeMB, total);
+  showResult(resultFiles, bookMeta.title, total);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -987,7 +988,7 @@ ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
-      headers:{ 'Content-Type':'application/json', 'x-api-key': claudeApiKey, 'anthropic-version':'2023-06-01' },
+      headers:{ 'Content-Type':'application/json', 'x-api-key': claudeApiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
       body: JSON.stringify({
         model:'claude-sonnet-4-20250514',
         max_tokens:2000,
@@ -1116,19 +1117,37 @@ function log(msg, cls='') {
   logLines.parentElement.scrollTop = logLines.parentElement.scrollHeight;
 }
 
-function showResult(url, title, durationMin, sizeMB, sentenceCount) {
+function showResult(files, bookTitle, sentenceCount) {
   document.getElementById('progressPanel').style.display = 'none';
   const panel = document.getElementById('resultPanel');
   panel.style.display = 'block'; panel.classList.add('fade-in');
 
-  document.getElementById('resultDesc').innerHTML =
-    `<strong>${title}</strong><br>${sentenceCount.toLocaleString('fr')} blocs · ${durationMin} minutes · ${sizeMB} Mo<br>
-    <span style="color:var(--ink-dim);font-size:11px">Fichier WAV · Voix ${selectedVoice} · Google Neural2 · Lecture fluide</span>`;
+  const totalMin  = files.reduce((a,f) => a + f.durMin, 0);
+  const totalSize = files.reduce((a,f) => a + parseFloat(f.sizeMB), 0).toFixed(1);
 
-  const dl = document.getElementById('dlMp3');
-  dl.href = url;
-  dl.download = (title || 'livre-audio').replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'') + '.wav';
-  dl.textContent = `⬇ Télécharger WAV (${sizeMB} Mo)`;
+  document.getElementById('resultDesc').innerHTML =
+    `<strong>${bookTitle}</strong><br>${sentenceCount.toLocaleString('fr')} blocs · ${totalMin} min · ${totalSize} Mo<br>
+    <span style="color:var(--ink-dim);font-size:11px">Voix ${selectedVoice} · Google Neural2 · ${files.length} fichier(s) WAV</span>`;
+
+  const btns = document.getElementById('downloadBtns');
+  btns.innerHTML = '';
+  files.forEach((f, i) => {
+    const safe = (f.title || `chapitre-${i+1}`).replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'');
+    const a = document.createElement('a');
+    a.className = 'btn-dl btn-dl-primary';
+    a.href = f.url;
+    a.download = safe + '.wav';
+    a.textContent = files.length === 1
+      ? `⬇ Télécharger WAV (${f.sizeMB} Mo)`
+      : `⬇ ${f.title} (${f.sizeMB} Mo)`;
+    btns.appendChild(a);
+  });
+
+  const restart = document.createElement('button');
+  restart.className = 'btn-dl btn-dl-secondary';
+  restart.textContent = '↩ Nouveau livre';
+  restart.onclick = restartApp;
+  btns.appendChild(restart);
 }
 
 function restartApp() {
