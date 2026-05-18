@@ -857,7 +857,7 @@ async function startConversion() {
     await sleep(0);
   }
 
-  // ── Assemblage final → un seul fichier WAV ────────────────────────────────
+  // ── Assemblage final → WAV par blobs (pas d'allocation géante) ───────────
   setPhase(3,'active');
   setPhaseDetail(3,'Assemblage WAV final…');
   updateGlobal(0.96,'Assemblage…');
@@ -866,14 +866,22 @@ async function startConversion() {
 
   const gap = Math.floor(SR * 0.015);
   const totalSmp = allPcmSegs.reduce((a,s) => a+s.length, 0);
-  const merged = new Float32Array(totalSmp + gap * allPcmSegs.length);
-  let off = 0;
-  for (const seg of allPcmSegs) { merged.set(seg, off); off += seg.length + gap; }
+  const totalSmpWithGaps = totalSmp + gap * allPcmSegs.length;
 
-  const wavBlob = pcmToWav(merged, SR);
+  // En-tête WAV (44 octets) calculé à l'avance
+  const wavHeader = buildWavHeader(totalSmpWithGaps, SR);
+  const parts = [wavHeader];
+  const gapInt16 = new Int16Array(gap); // silence entre segments
+  for (const seg of allPcmSegs) {
+    parts.push(float32ToInt16(seg).buffer);
+    parts.push(gapInt16.buffer);
+  }
+  allPcmSegs.length = 0; // libère la mémoire
+
+  const wavBlob = new Blob(parts, { type:'audio/wav' });
   const url = URL.createObjectURL(wavBlob);
   const sizeMB = (wavBlob.size/1024/1024).toFixed(1);
-  const durMin = Math.round(merged.length/SR/60);
+  const durMin = Math.round(totalSmpWithGaps/SR/60);
 
   setPhase(3,'done');
   updateGlobal(1,'Terminé !');
@@ -932,7 +940,7 @@ ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'x-api-key': claudeApiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
       body: JSON.stringify({
-        model:'claude-sonnet-4-20250514',
+        model:'claude-sonnet-4-6',
         max_tokens:2000,
         messages:[{role:'user', content:prompt}]
       })
@@ -991,6 +999,27 @@ async function googleTTS(ssml, retries = 3) {
 // ─────────────────────────────────────────────────────────────────────────────
 // WAV ENCODER (Float32Array PCM → WAV Blob)
 // ─────────────────────────────────────────────────────────────────────────────
+function buildWavHeader(numSamples, sampleRate) {
+  const dataLen = numSamples * 2;
+  const buf = new ArrayBuffer(44); const v = new DataView(buf);
+  const w = (o,s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4,36+dataLen,true); w(8,'WAVE'); w(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sampleRate,true); v.setUint32(28,sampleRate*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w(36,'data'); v.setUint32(40,dataLen,true);
+  return buf;
+}
+
+function float32ToInt16(floatData) {
+  const out = new Int16Array(floatData.length);
+  for (let i = 0; i < floatData.length; i++) {
+    const s = Math.max(-1, Math.min(1, floatData[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return out;
+}
+
 function pcmToWav(floatData, sampleRate) {
   const numChannels = 1;
   const bitDepth    = 16;
