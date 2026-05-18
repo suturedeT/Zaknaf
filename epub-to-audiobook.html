@@ -596,9 +596,18 @@ header {
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
-// AUTH — protection par mot de passe (hash SHA-256 stocké en localStorage)
+// AUTH — hash SHA-256 codé en dur dans la source (seul le propriétaire du
+//        fichier peut modifier le mot de passe)
+//
+// Pour changer le mot de passe :
+//   1. Ouvre epub-to-audiobook.html?setup dans ton navigateur
+//   2. Entre ton nouveau mot de passe → copie le hash affiché
+//   3. Remplace la valeur de PASSWORD_HASH ci-dessous par ce hash
 // ─────────────────────────────────────────────────────────────────────────────
-const AUTH_KEY = 'epubson_pwd_hash';
+
+// ↓↓ REMPLACE PAR TON HASH (obtenu via ?setup) ↓↓
+const PASSWORD_HASH = '';
+// ↑↑──────────────────────────────────────────↑↑
 
 async function sha256(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
@@ -606,45 +615,33 @@ async function sha256(str) {
 }
 
 function initAuth() {
-  if (sessionStorage.getItem('epubson_auth') === '1') { unlockApp(); return; }
-  const overlay = document.getElementById('authOverlay');
-  const stored  = localStorage.getItem(AUTH_KEY);
-  if (!stored) {
-    // Premier lancement — créer un mot de passe
-    document.getElementById('authSubtitle').textContent = 'Créez votre mot de passe';
-    document.getElementById('authInput2').style.display = 'block';
-    document.getElementById('authBtn').textContent = 'Créer le mot de passe';
-  } else {
-    document.getElementById('authSubtitle').textContent = 'Accès protégé';
-    document.getElementById('authReset').style.display = 'block';
+  // Mode ?setup : affiche un générateur de hash (réservé au propriétaire)
+  if (new URLSearchParams(location.search).has('setup')) {
+    showSetupMode(); return;
   }
+  if (sessionStorage.getItem('epubson_auth') === '1') { unlockApp(); return; }
+  if (!PASSWORD_HASH) {
+    document.getElementById('authSubtitle').textContent = '⚠ Application non configurée';
+    document.getElementById('authError').textContent = 'Ouvre le fichier avec ?setup pour définir un mot de passe.';
+    document.getElementById('authBtn').style.display = 'none';
+    document.getElementById('authInput').style.display = 'none';
+    return;
+  }
+  document.getElementById('authSubtitle').textContent = 'Accès protégé';
   document.getElementById('authInput').addEventListener('keydown', e => { if (e.key==='Enter') submitAuth(); });
-  document.getElementById('authInput2').addEventListener('keydown', e => { if (e.key==='Enter') submitAuth(); });
+  document.getElementById('authInput').focus();
 }
 
 async function submitAuth() {
-  const pwd  = document.getElementById('authInput').value;
-  const pwd2 = document.getElementById('authInput2').value;
-  const err  = document.getElementById('authError');
-  err.textContent = '';
-
-  if (!localStorage.getItem(AUTH_KEY)) {
-    // Mode création
-    if (pwd.length < 4) { err.textContent = 'Minimum 4 caractères.'; return; }
-    if (pwd !== pwd2)   { err.textContent = 'Les mots de passe ne correspondent pas.'; return; }
-    localStorage.setItem(AUTH_KEY, await sha256(pwd));
+  const pwd = document.getElementById('authInput').value;
+  const err = document.getElementById('authError');
+  if ((await sha256(pwd)) === PASSWORD_HASH) {
     sessionStorage.setItem('epubson_auth', '1');
     unlockApp();
   } else {
-    // Mode login
-    if ((await sha256(pwd)) === localStorage.getItem(AUTH_KEY)) {
-      sessionStorage.setItem('epubson_auth', '1');
-      unlockApp();
-    } else {
-      err.textContent = 'Mot de passe incorrect.';
-      document.getElementById('authInput').value = '';
-      document.getElementById('authInput').focus();
-    }
+    err.textContent = 'Mot de passe incorrect.';
+    document.getElementById('authInput').value = '';
+    document.getElementById('authInput').focus();
   }
 }
 
@@ -652,11 +649,28 @@ function unlockApp() {
   document.getElementById('authOverlay').classList.add('hidden');
 }
 
-function resetPassword() {
-  if (!confirm('Réinitialiser le mot de passe ? Vous devrez en créer un nouveau.')) return;
-  localStorage.removeItem(AUTH_KEY);
-  sessionStorage.removeItem('epubson_auth');
-  location.reload();
+function showSetupMode() {
+  const box = document.querySelector('.auth-box');
+  box.innerHTML = `
+    <div class="auth-logo">Épub<span>Son</span></div>
+    <div class="auth-subtitle">Générateur de hash — mode configuration</div>
+    <input id="authInput" class="auth-input" type="password" placeholder="Ton nouveau mot de passe"/>
+    <button class="auth-btn" onclick="generateHash()">Générer le hash</button>
+    <div class="auth-error" id="authError"></div>
+    <div id="hashResult" style="display:none;background:var(--lift);border-radius:8px;padding:12px;font-size:11px;word-break:break-all;color:var(--ink)"></div>
+    <div style="font-size:12px;color:var(--ink-dim);text-align:center">Copie ce hash dans PASSWORD_HASH dans le source,<br>puis recharge la page sans <code>?setup</code>.</div>
+  `;
+  document.getElementById('authInput').addEventListener('keydown', e => { if (e.key==='Enter') generateHash(); });
+}
+
+async function generateHash() {
+  const pwd = document.getElementById('authInput').value;
+  if (pwd.length < 4) { document.getElementById('authError').textContent = 'Minimum 4 caractères.'; return; }
+  const h = await sha256(pwd);
+  const res = document.getElementById('hashResult');
+  res.style.display = 'block';
+  res.innerHTML = `<b>Hash à copier :</b><br><span style="color:var(--accent);user-select:all">${h}</span>`;
+  document.getElementById('authError').textContent = '';
 }
 
 window.addEventListener('DOMContentLoaded', initAuth);
