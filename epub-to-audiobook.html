@@ -412,9 +412,53 @@ header {
   .voice-grid { grid-template-columns:1fr; }
   .download-btns { flex-direction:column; }
 }
+
+/* ── Auth overlay ── */
+#authOverlay {
+  position:fixed; inset:0; z-index:9999;
+  background:var(--void);
+  display:flex; align-items:center; justify-content:center;
+}
+#authOverlay.hidden { display:none; }
+.auth-box {
+  background:var(--surface); border:1px solid var(--border-hi);
+  border-radius:16px; padding:40px 36px; width:340px; max-width:90vw;
+  display:flex; flex-direction:column; gap:18px;
+  box-shadow:0 8px 40px rgba(0,0,0,0.6);
+}
+.auth-logo { font-family:'DM Serif Display',serif; font-size:22px; color:#fff; text-align:center; }
+.auth-logo span { color:var(--accent); }
+.auth-subtitle { font-size:13px; color:var(--ink-dim); text-align:center; margin-top:-8px; }
+.auth-input {
+  background:var(--lift); border:1px solid var(--border);
+  border-radius:8px; padding:12px 14px;
+  color:var(--ink); font-size:15px; outline:none; width:100%; box-sizing:border-box;
+}
+.auth-input:focus { border-color:var(--accent); }
+.auth-btn {
+  background:var(--accent); color:#fff; border:none; border-radius:8px;
+  padding:12px; font-size:15px; font-weight:500; cursor:pointer; width:100%;
+}
+.auth-btn:hover { background:var(--accent2); }
+.auth-error { color:var(--red); font-size:13px; text-align:center; min-height:18px; }
+.auth-reset { font-size:12px; color:var(--ink-dim); text-align:center; cursor:pointer; text-decoration:underline; }
 </style>
 </head>
 <body>
+
+<!-- ── Auth overlay (affiché en premier, caché après auth) ── -->
+<div id="authOverlay">
+  <div class="auth-box">
+    <div class="auth-logo">Épub<span>Son</span></div>
+    <div class="auth-subtitle" id="authSubtitle">Accès protégé</div>
+    <input id="authInput" class="auth-input" type="password" placeholder="Mot de passe" autocomplete="current-password"/>
+    <input id="authInput2" class="auth-input" type="password" placeholder="Confirmer le mot de passe" style="display:none" autocomplete="new-password"/>
+    <button class="auth-btn" id="authBtn" onclick="submitAuth()">Entrer</button>
+    <div class="auth-error" id="authError"></div>
+    <div class="auth-reset" id="authReset" style="display:none" onclick="resetPassword()">Réinitialiser le mot de passe</div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <header>
@@ -551,6 +595,72 @@ header {
 </div>
 
 <script>
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH — protection par mot de passe (hash SHA-256 stocké en localStorage)
+// ─────────────────────────────────────────────────────────────────────────────
+const AUTH_KEY = 'epubson_pwd_hash';
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+function initAuth() {
+  if (sessionStorage.getItem('epubson_auth') === '1') { unlockApp(); return; }
+  const overlay = document.getElementById('authOverlay');
+  const stored  = localStorage.getItem(AUTH_KEY);
+  if (!stored) {
+    // Premier lancement — créer un mot de passe
+    document.getElementById('authSubtitle').textContent = 'Créez votre mot de passe';
+    document.getElementById('authInput2').style.display = 'block';
+    document.getElementById('authBtn').textContent = 'Créer le mot de passe';
+  } else {
+    document.getElementById('authSubtitle').textContent = 'Accès protégé';
+    document.getElementById('authReset').style.display = 'block';
+  }
+  document.getElementById('authInput').addEventListener('keydown', e => { if (e.key==='Enter') submitAuth(); });
+  document.getElementById('authInput2').addEventListener('keydown', e => { if (e.key==='Enter') submitAuth(); });
+}
+
+async function submitAuth() {
+  const pwd  = document.getElementById('authInput').value;
+  const pwd2 = document.getElementById('authInput2').value;
+  const err  = document.getElementById('authError');
+  err.textContent = '';
+
+  if (!localStorage.getItem(AUTH_KEY)) {
+    // Mode création
+    if (pwd.length < 4) { err.textContent = 'Minimum 4 caractères.'; return; }
+    if (pwd !== pwd2)   { err.textContent = 'Les mots de passe ne correspondent pas.'; return; }
+    localStorage.setItem(AUTH_KEY, await sha256(pwd));
+    sessionStorage.setItem('epubson_auth', '1');
+    unlockApp();
+  } else {
+    // Mode login
+    if ((await sha256(pwd)) === localStorage.getItem(AUTH_KEY)) {
+      sessionStorage.setItem('epubson_auth', '1');
+      unlockApp();
+    } else {
+      err.textContent = 'Mot de passe incorrect.';
+      document.getElementById('authInput').value = '';
+      document.getElementById('authInput').focus();
+    }
+  }
+}
+
+function unlockApp() {
+  document.getElementById('authOverlay').classList.add('hidden');
+}
+
+function resetPassword() {
+  if (!confirm('Réinitialiser le mot de passe ? Vous devrez en créer un nouveau.')) return;
+  localStorage.removeItem(AUTH_KEY);
+  sessionStorage.removeItem('epubson_auth');
+  location.reload();
+}
+
+window.addEventListener('DOMContentLoaded', initAuth);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // VOICES
 // ─────────────────────────────────────────────────────────────────────────────
