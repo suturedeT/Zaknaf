@@ -767,262 +767,182 @@ async function startConversion() {
     const cb = document.getElementById(`ch${i}`);
     return cb && cb.checked;
   });
-
   if (selectedChapters.length === 0) { alert('Sélectionnez au moins un chapitre.'); return; }
 
   aborted = false;
-  allAudioBuffers = [];
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
   document.getElementById('convertBtn').style.display = 'none';
   document.getElementById('abortBtn').style.display = 'block';
   document.getElementById('progressPanel').style.display = 'block';
   document.getElementById('progressPanel').classList.add('fade-in');
 
-  // Segmentation en blocs de lecture naturels (paragraphes / 300 mots max)
-  // Chaque phrase conserve son index de chapitre pour l'encodage par chapitre
-  const allSentences = []; // { text, chIdx, chTitle }
-  for (let ci = 0; ci < selectedChapters.length; ci++) {
-    const ch = selectedChapters[ci];
-    const paragraphs = ch.text
-      .split(/\n{2,}/)
-      .map(p => p.replace(/\s+/g,' ').trim())
-      .filter(p => p.length > 10);
+  const BATCH = 8, CONCURRENCY = 4, SILENCE = 0.003;
+  const totalChapters = selectedChapters.length;
+  const useM4B = typeof AudioEncoder !== 'undefined' && typeof AudioData !== 'undefined';
 
-    for (const para of paragraphs) {
-      if (para.length <= 300) {
-        allSentences.push({ text: para, chIdx: ci, chTitle: ch.title });
-        continue;
-      }
-      const raw = para.split(/(?<=[.!?»…])\s+/).map(s => s.trim()).filter(s => s.length > 3);
-      let buf = '';
-      for (const s of raw) {
-        if ((buf + ' ' + s).trim().length > 280 && buf.length > 0) {
-          allSentences.push({ text: buf.trim(), chIdx: ci, chTitle: ch.title });
-          buf = s;
-        } else {
-          buf = buf ? buf + ' ' + s : s;
-        }
-      }
-      if (buf.trim().length > 3) allSentences.push({ text: buf.trim(), chIdx: ci, chTitle: ch.title });
-    }
-  }
+  // ── Init encodeur M4B (une seule instance pour tout le livre) ─────────────
+  let muxer = null, aacEncoder = null, currentUs = 0;
+  const chapterMarkers = [];
+  const resultFiles = [];
+  let totalSentences = 0;
 
-  log(`📚 ${selectedChapters.length} chapitres · ${allSentences.length} phrases à synthétiser`,'hi');
-
-  const total   = allSentences.length;
-  const ssmlMap = {};
-  const mp3Map  = {};
-
-  // ── Phase 0 : SSML via Claude (par lots de 8) ────────────────────────────
-  setPhase(0,'active');
-  const BATCH = 8;
-  let ssmlDone = 0;
-
-  for (let i = 0; i < total; i += BATCH) {
-    if (aborted) { onAbort(); return; }
-    const batch = allSentences.slice(i, i + BATCH).map(s => s.text);
-    setPhaseDetail(0, `Lot ${Math.floor(i/BATCH)+1} / ${Math.ceil(total/BATCH)}`);
-
-    const results = await generateSSMLBatch(batch);
-    results.forEach((ssml, j) => { ssmlMap[i + j] = ssml; });
-
-    ssmlDone += batch.length;
-    setPhaseBar(0, ssmlDone / total * 100);
-    updateGlobal(ssmlDone / total * 0.4, `Analyse SSML : ${ssmlDone}/${total} phrases`);
-    log(`✓ SSML lot ${Math.floor(i/BATCH)+1} (phrases ${i+1}–${i+batch.length})`,'ok');
-  }
-
-  setPhase(0,'done');
-  log('✓ Toutes les analyses SSML terminées','ok');
-
-  // ── Phase 1 : TTS Google Neural2 ─────────────────────────────────────────
-  setPhase(1,'active');
-  let ttsDone = 0;
-  const CONCURRENCY = 4;
-
-  for (let i = 0; i < total; i += CONCURRENCY) {
-    if (aborted) { onAbort(); return; }
-    const slice = Array.from({ length: Math.min(CONCURRENCY, total - i) }, (_, j) => i + j);
-    await Promise.all(slice.map(async idx => {
-      const ssml = ssmlMap[idx] || `<speak>${escapeXml(allSentences[idx].text)}</speak>`;
-      mp3Map[idx] = await googleTTS(ssml);
-      ttsDone++;
-      setPhaseBar(1, ttsDone / total * 100);
-      setPhaseDetail(1, `${ttsDone}/${total} phrases synthétisées`);
-      updateGlobal(0.4 + ttsDone / total * 0.45, `Synthèse vocale : ${ttsDone}/${total}`);
-    }));
-    log(`🔊 Synthèse ${Math.min(i+CONCURRENCY,total)}/${total}`);
-  }
-
-  setPhase(1,'done');
-  log('✓ Synthèse vocale complète','ok');
-
-  // ── Phase 2 : Décodage PCM + trim silences + groupement par chapitre ─────
-  setPhase(2,'active');
-  setPhaseDetail(2,'Décodage et assemblage audio…');
-  log('🔧 Décodage par chapitre (évite les problèmes mémoire)…','hi');
-
-  const SILENCE_THRESHOLD = 0.003;
-  // chapterPcm[chIdx] = { segments: Float32Array[], totalSamples, sampleRate, title }
-  const chapterPcm = {};
-
-  for (let i = 0; i < total; i++) {
-    if (aborted) { onAbort(); return; }
-    if (!mp3Map[i]) continue;
-
-    const chIdx   = allSentences[i].chIdx;
-    const chTitle = allSentences[i].chTitle;
-    if (!chapterPcm[chIdx]) chapterPcm[chIdx] = { segments: [], totalSamples: 0, sampleRate: 24000, title: chTitle };
-
+  if (useM4B) {
     try {
-      const decoded = await audioCtx.decodeAudioData(mp3Map[i]);
-      mp3Map[i] = null;
-      const raw = decoded.getChannelData(0);
-      const sr  = decoded.sampleRate;
-      chapterPcm[chIdx].sampleRate = sr;
-
-      let start = 0;
-      while (start < raw.length && Math.abs(raw[start]) < SILENCE_THRESHOLD) start++;
-      const keepTail = Math.floor(sr * 0.025);
-      let end = raw.length - 1;
-      while (end > start && Math.abs(raw[end]) < SILENCE_THRESHOLD) end--;
-      end = Math.min(end + keepTail, raw.length - 1);
-      if (end - start < sr * 0.02) continue;
-
-      const trimmed = raw.slice(start, end + 1);
-      const fade = Math.min(Math.floor(sr * 0.005), Math.floor(trimmed.length / 2));
-      for (let f = 0; f < fade; f++) {
-        const g = f / fade;
-        trimmed[f] *= g;
-        trimmed[trimmed.length - 1 - f] *= g;
-      }
-
-      chapterPcm[chIdx].segments.push(trimmed);
-      chapterPcm[chIdx].totalSamples += trimmed.length;
+      const { Muxer, ArrayBufferTarget } = await import('https://esm.sh/mp4-muxer@5');
+      const target = new ArrayBufferTarget();
+      muxer = new Muxer({ target, audio:{ codec:'aac', sampleRate:24000, numberOfChannels:1 }, fastStart:'in-memory' });
+      aacEncoder = new AudioEncoder({
+        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+        error: e => log(`⚠ AAC: ${e.message}`,'err')
+      });
+      aacEncoder.configure({ codec:'mp4a.40.2', sampleRate:24000, numberOfChannels:1, bitrate:96000 });
+      log('🎵 Encodeur M4B initialisé — pipeline chapitre par chapitre','hi');
     } catch(e) {
-      log(`⚠ Segment ${i} non décodable, ignoré`,'err');
+      log(`⚠ M4B indisponible (${e.message}) — fallback WAV`,'err');
+      muxer = null; aacEncoder = null;
     }
-
-    if (i % 20 === 0) {
-      setPhaseBar(2, i / total * 100);
-      updateGlobal(0.85 + i / total * 0.1, `Décodage : ${i+1}/${total}`);
-      await sleep(0);
-    }
+  } else {
+    log('⚠ WebCodecs absent — export WAV numérotés','err');
   }
 
-  setPhaseBar(2, 100);
-  log(`✓ Décodage terminé — ${Object.keys(chapterPcm).length} chapitres prêts`,'ok');
-  setPhase(2,'done');
+  // ── Boucle principale : un chapitre à la fois ─────────────────────────────
+  for (let ci = 0; ci < totalChapters; ci++) {
+    if (aborted) { if (aacEncoder) aacEncoder.close(); onAbort(); return; }
+    const ch = selectedChapters[ci];
+    const gBase = ci / totalChapters;
+    const gSlice = 1 / totalChapters;
 
-  // ── Phase 3 : Encodage M4B (AAC + marqueurs de chapitres iOS Books) ────────
-  setPhase(3,'active');
-  const chIndices = Object.keys(chapterPcm).map(Number).sort((a,b) => a-b);
+    const sentences = segmentChapter(ch);
+    const total = sentences.length;
+    totalSentences += total;
+    const ssmlMap = {}, mp3Map = {};
 
-  async function encodeWavFallback() {
-    log('⚠ WebCodecs absent — export WAV numérotés (Safari < 16.4)','err');
-    const resultFiles = [];
-    let chDone = 0;
-    for (const ci of chIndices) {
-      if (aborted) { onAbort(); return; }
-      const { segments, totalSamples, sampleRate, title } = chapterPcm[ci];
-      const gap = Math.floor(sampleRate * 0.015);
-      const gapBuf = new Float32Array(gap);
-      const merged = new Float32Array(totalSamples + gap * segments.length);
-      let off = 0;
-      for (const seg of segments) { merged.set(seg, off); off += seg.length; merged.set(gapBuf, off); off += gap; }
-      const blob = pcmToWav(merged, sampleRate);
+    log(`📖 Ch.${ci+1}/${totalChapters} : ${ch.title} (${total} phrases)`,'hi');
+
+    // Phase 0 : SSML
+    setPhase(0,'active');
+    let ssmlDone = 0;
+    for (let i = 0; i < total; i += BATCH) {
+      if (aborted) { if (aacEncoder) aacEncoder.close(); onAbort(); return; }
+      const batch = sentences.slice(i, i + BATCH);
+      setPhaseDetail(0, `Ch.${ci+1}/${totalChapters} — lot ${Math.floor(i/BATCH)+1}/${Math.ceil(total/BATCH)}`);
+      const results = await generateSSMLBatch(batch);
+      results.forEach((ssml, j) => { ssmlMap[i+j] = ssml; });
+      ssmlDone += batch.length;
+      setPhaseBar(0, ssmlDone/total*100);
+      updateGlobal(gBase + gSlice*(ssmlDone/total*0.35), `Ch.${ci+1} — SSML ${ssmlDone}/${total}`);
+    }
+    setPhase(0,'done');
+
+    // Phase 1 : TTS
+    setPhase(1,'active');
+    let ttsDone = 0;
+    for (let i = 0; i < total; i += CONCURRENCY) {
+      if (aborted) { if (aacEncoder) aacEncoder.close(); onAbort(); return; }
+      const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
+      await Promise.all(slice.map(async idx => {
+        const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx])}</speak>`;
+        mp3Map[idx] = await googleTTS(ssml);
+        ttsDone++;
+        setPhaseBar(1, ttsDone/total*100);
+        setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
+        updateGlobal(gBase + gSlice*(0.35 + ttsDone/total*0.40), `Ch.${ci+1} TTS`);
+      }));
+    }
+    setPhase(1,'done');
+
+    // Phase 2 : Décodage + trim (libère mp3Map immédiatement)
+    setPhase(2,'active');
+    const pcmSegs = [];
+    for (let i = 0; i < total; i++) {
+      if (aborted) { if (aacEncoder) aacEncoder.close(); onAbort(); return; }
+      if (!mp3Map[i]) continue;
+      try {
+        const decoded = await audioCtx.decodeAudioData(mp3Map[i]);
+        mp3Map[i] = null;
+        const raw = decoded.getChannelData(0), sr = decoded.sampleRate;
+        let s = 0; while (s < raw.length && Math.abs(raw[s]) < SILENCE) s++;
+        let e = raw.length-1; while (e > s && Math.abs(raw[e]) < SILENCE) e--;
+        e = Math.min(e + Math.floor(sr*0.025), raw.length-1);
+        if (e-s < sr*0.02) continue;
+        const t = raw.slice(s, e+1);
+        const fade = Math.min(Math.floor(sr*0.005), Math.floor(t.length/2));
+        for (let f = 0; f < fade; f++) { const g=f/fade; t[f]*=g; t[t.length-1-f]*=g; }
+        pcmSegs.push(t);
+      } catch(err) { log(`⚠ Segment ${i} ignoré`,'err'); }
+      if (i%20===0) { setPhaseBar(2, i/total*100); updateGlobal(gBase+gSlice*(0.75+i/total*0.15), `Ch.${ci+1} décodage`); await sleep(0); }
+    }
+    setPhaseBar(2,100); setPhase(2,'done');
+
+    // Phase 3 : Encodage (AAC→M4B ou WAV fallback) — libère PCM immédiatement
+    setPhase(3,'active');
+    setPhaseDetail(3, `Ch.${ci+1}/${totalChapters} — ${ch.title}`);
+
+    const sr = 24000, gap = Math.floor(sr*0.015);
+    const totalSmp = pcmSegs.reduce((a,s) => a+s.length, 0);
+    const merged = new Float32Array(totalSmp + gap*pcmSegs.length);
+    let off = 0;
+    for (const seg of pcmSegs) { merged.set(seg, off); off += seg.length+gap; }
+    pcmSegs.length = 0; // libère les segments PCM
+
+    if (muxer && aacEncoder) {
+      chapterMarkers.push({ timestamp: currentUs, title: ch.title });
+      const CHUNK = 4096;
+      for (let i = 0; i < merged.length; i += CHUNK) {
+        const slice = merged.subarray(i, Math.min(i+CHUNK, merged.length));
+        const tsUs = currentUs + Math.round(i/sr*1e6);
+        const ad = new AudioData({ format:'f32', sampleRate:sr, numberOfChannels:1, numberOfFrames:slice.length, timestamp:tsUs, data:slice });
+        aacEncoder.encode(ad); ad.close();
+      }
+      await aacEncoder.flush();
+      currentUs += Math.round(merged.length/sr*1e6);
+      log(`✓ Ch.${ci+1} AAC encodé — mémoire libérée`,'ok');
+    } else {
+      const blob = pcmToWav(merged, sr);
       const url = URL.createObjectURL(blob);
       const sizeMB = (blob.size/1024/1024).toFixed(1);
-      const durMin = Math.round(merged.length/sampleRate/60);
-      resultFiles.push({ url, title, sizeMB, durMin, ext:'wav' });
-      chapterPcm[ci].segments = [];
-      chDone++;
-      setPhaseBar(3, chDone/chIndices.length*100);
-      updateGlobal(0.95+chDone/chIndices.length*0.05, `WAV ${chDone}/${chIndices.length}`);
-      log(`✓ ${title} — ${sizeMB} Mo`,'ok');
-      await sleep(0);
-    }
-    setPhase(3,'done'); updateGlobal(1,'Terminé !');
-    document.getElementById('abortBtn').style.display = 'none';
-    showResult(resultFiles, bookMeta.title, total);
-  }
-
-  if (typeof AudioEncoder === 'undefined' || typeof AudioData === 'undefined') {
-    await encodeWavFallback(); return;
-  }
-
-  setPhaseDetail(3,'Chargement encodeur AAC…');
-  log('📦 Création du livre audio M4B avec marqueurs de chapitres…','hi');
-
-  let Muxer, ArrayBufferTarget;
-  try {
-    ({ Muxer, ArrayBufferTarget } = await import('https://esm.sh/mp4-muxer@5'));
-  } catch(e) {
-    log(`⚠ mp4-muxer indisponible — fallback WAV`,'err');
-    await encodeWavFallback(); return;
-  }
-
-  const outRate = chapterPcm[chIndices[0]]?.sampleRate || 24000;
-  const target  = new ArrayBufferTarget();
-  const muxer   = new Muxer({ target, audio:{ codec:'aac', sampleRate:outRate, numberOfChannels:1 }, fastStart:'in-memory' });
-
-  const chapterMarkers = [];
-  let currentUs = 0;
-
-  const aacEncoder = new AudioEncoder({
-    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-    error: e => log(`⚠ AAC: ${e.message}`,'err')
-  });
-  aacEncoder.configure({ codec:'mp4a.40.2', sampleRate:outRate, numberOfChannels:1, bitrate:96000 });
-
-  let chDone = 0;
-  for (const ci of chIndices) {
-    if (aborted) { aacEncoder.close(); onAbort(); return; }
-    const { segments, sampleRate, title } = chapterPcm[ci];
-
-    chapterMarkers.push({ timestamp: currentUs, title });
-    setPhaseDetail(3, `${chDone+1}/${chIndices.length} — ${title}`);
-    log(`🎵 Encodage AAC : ${title}…`,'hi');
-
-    const gap = Math.floor(sampleRate * 0.015);
-    const totalSeg = segments.reduce((a,s) => a + s.length, 0);
-    const merged = new Float32Array(totalSeg + gap * segments.length);
-    let off = 0;
-    for (const seg of segments) { merged.set(seg, off); off += seg.length + gap; }
-
-    const CHUNK = 4096;
-    for (let i = 0; i < merged.length; i += CHUNK) {
-      const slice = merged.subarray(i, Math.min(i + CHUNK, merged.length));
-      const tsUs = currentUs + Math.round(i / sampleRate * 1e6);
-      const ad = new AudioData({ format:'f32', sampleRate, numberOfChannels:1, numberOfFrames:slice.length, timestamp:tsUs, data:slice });
-      aacEncoder.encode(ad);
-      ad.close();
+      const durMin = Math.round(merged.length/sr/60);
+      resultFiles.push({ url, title: ch.title, sizeMB, durMin, ext:'wav' });
+      log(`✓ Ch.${ci+1} WAV — ${sizeMB} Mo`,'ok');
     }
 
-    currentUs += Math.round(merged.length / sampleRate * 1e6);
-    chapterPcm[ci].segments = [];
-    chDone++;
-    setPhaseBar(3, chDone/chIndices.length*100);
-    updateGlobal(0.95+chDone/chIndices.length*0.04, `M4B ${chDone}/${chIndices.length}`);
-    await sleep(0);
+    setPhaseBar(3,100); setPhase(3,'done');
+    updateGlobal((ci+1)/totalChapters, `${ci+1}/${totalChapters} chapitres traités`);
   }
 
-  await aacEncoder.flush();
-  muxer.finalize();
-
-  const m4bBuf = injectChapters(muxer.target.buffer, chapterMarkers);
-  const blob   = new Blob([m4bBuf], { type:'audio/mp4' });
-  const url    = URL.createObjectURL(blob);
-  const sizeMB = (blob.size/1024/1024).toFixed(1);
-  const durMin = Math.round(currentUs/1e6/60);
-
-  setPhase(3,'done');
-  updateGlobal(1,'Terminé !');
-  log(`✓ M4B prêt — ${sizeMB} Mo (~${durMin} min) · ${chIndices.length} chapitres`,'ok');
-
+  // ── Finalisation ──────────────────────────────────────────────────────────
   document.getElementById('abortBtn').style.display = 'none';
-  showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'m4b' }], bookMeta.title, total);
+
+  if (muxer && aacEncoder) {
+    muxer.finalize();
+    const m4bBuf = injectChapters(muxer.target.buffer, chapterMarkers);
+    const blob = new Blob([m4bBuf], { type:'audio/mp4' });
+    const url = URL.createObjectURL(blob);
+    const sizeMB = (blob.size/1024/1024).toFixed(1);
+    const durMin = Math.round(currentUs/1e6/60);
+    updateGlobal(1,'Terminé !');
+    log(`✓ M4B complet — ${sizeMB} Mo (~${durMin} min) · ${totalChapters} chapitres`,'ok');
+    showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'m4b' }], bookMeta.title, totalSentences);
+  } else {
+    updateGlobal(1,'Terminé !');
+    showResult(resultFiles, bookMeta.title, totalSentences);
+  }
+}
+
+function segmentChapter(ch) {
+  const sentences = [];
+  const paragraphs = ch.text.split(/\n{2,}/).map(p => p.replace(/\s+/g,' ').trim()).filter(p => p.length > 10);
+  for (const para of paragraphs) {
+    if (para.length <= 300) { sentences.push(para); continue; }
+    const raw = para.split(/(?<=[.!?»…])\s+/).map(s => s.trim()).filter(s => s.length > 3);
+    let buf = '';
+    for (const s of raw) {
+      if ((buf+' '+s).trim().length > 280 && buf.length > 0) { sentences.push(buf.trim()); buf = s; }
+      else { buf = buf ? buf+' '+s : s; }
+    }
+    if (buf.trim().length > 3) sentences.push(buf.trim());
+  }
+  return sentences;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
