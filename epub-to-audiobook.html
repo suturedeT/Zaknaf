@@ -801,7 +801,7 @@ async function startConversion() {
     let ssmlDone = 0;
     for (let i = 0; i < total; i += BATCH) {
       if (aborted) { onAbort(); return; }
-      const batch = sentences.slice(i, i + BATCH);
+      const batch = sentences.slice(i, i + BATCH).map(s => s.text);
       setPhaseDetail(0, `Ch.${ci+1}/${totalChapters} — lot ${Math.floor(i/BATCH)+1}/${Math.ceil(total/BATCH)}`);
       const results = await generateSSMLBatch(batch);
       results.forEach((ssml, j) => { ssmlMap[i+j] = ssml; });
@@ -818,7 +818,7 @@ async function startConversion() {
       if (aborted) { onAbort(); return; }
       const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
       await Promise.all(slice.map(async idx => {
-        const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx])}</speak>`;
+        const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
         mp3Map[idx] = await googleTTS(ssml);
         ttsDone++;
         setPhaseBar(1, ttsDone/total*100);
@@ -845,7 +845,7 @@ async function startConversion() {
         const t = raw.slice(s, e+1);
         const fade = Math.min(Math.floor(sr*0.005), Math.floor(t.length/2));
         for (let f = 0; f < fade; f++) { const g=f/fade; t[f]*=g; t[t.length-1-f]*=g; }
-        chPcmSegs.push(t);
+        chPcmSegs.push({ pcm: t, gapMs: sentences[i]?.gapMs ?? 450 });
       } catch(err) { log(`⚠ Segment ${i} ignoré`,'err'); }
       if (i%20===0) { setPhaseBar(2, i/total*100); updateGlobal(gBase+gSlice*(0.70+i/total*0.20), `Ch.${ci+1} décodage`); await sleep(0); }
     }
@@ -858,22 +858,28 @@ async function startConversion() {
 
     const enc = new lamejs.Mp3Encoder(1, SR, 128);
     const FRAME = 1152;
-    const gapI16 = new Int16Array(Math.floor(SR * 0.015));
 
-    for (const seg of chPcmSegs) {
-      const i16 = float32ToInt16(seg);
-      totalSamples += i16.length;
-      for (let i = 0; i < i16.length; i += FRAME) {
-        const chunk = i16.subarray(i, Math.min(i+FRAME, i16.length));
-        const buf = enc.encodeBuffer(chunk);
-        if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
-      }
-      // silence inter-segment
-      for (let i = 0; i < gapI16.length; i += FRAME) {
-        const buf = enc.encodeBuffer(gapI16.subarray(i, Math.min(i+FRAME, gapI16.length)));
+    function encodeSilence(ms) {
+      const silI16 = new Int16Array(Math.floor(SR * ms / 1000));
+      for (let i = 0; i < silI16.length; i += FRAME) {
+        const buf = enc.encodeBuffer(silI16.subarray(i, Math.min(i+FRAME, silI16.length)));
         if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
       }
     }
+
+    for (const seg of chPcmSegs) {
+      const i16 = float32ToInt16(seg.pcm);
+      totalSamples += i16.length;
+      for (let i = 0; i < i16.length; i += FRAME) {
+        const buf = enc.encodeBuffer(i16.subarray(i, Math.min(i+FRAME, i16.length)));
+        if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
+      }
+      encodeSilence(seg.gapMs); // pause adaptée à la ponctuation
+    }
+
+    // Pause de fin de chapitre (1 seconde)
+    encodeSilence(1000);
+
     const flushed = enc.flush();
     if (flushed.length > 0) allMp3Parts.push(new Uint8Array(flushed));
     chPcmSegs.length = 0; // libère PCM
@@ -898,20 +904,39 @@ async function startConversion() {
   showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'mp3' }], bookMeta.title, totalSentences);
 }
 
+function sentenceGapMs(text) {
+  const t = text.trimEnd();
+  if (/[!?]$/.test(t))   return 550;  // exclamation / question
+  if (/[.»…]$/.test(t))  return 450;  // fin de phrase normale
+  if (/[;]$/.test(t))    return 300;  // point-virgule
+  if (/[:]$/.test(t))    return 250;  // deux-points
+  if (/[,]$/.test(t))    return 150;  // virgule (rare ici)
+  return 400;                          // défaut
+}
+
 function segmentChapter(ch) {
-  const sentences = [];
+  const result = [];
   const paragraphs = ch.text.split(/\n{2,}/).map(p => p.replace(/\s+/g,' ').trim()).filter(p => p.length > 10);
-  for (const para of paragraphs) {
-    if (para.length <= 300) { sentences.push(para); continue; }
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    const para = paragraphs[pi];
+    const isLastPara = pi === paragraphs.length - 1;
+    if (para.length <= 300) {
+      result.push({ text: para, gapMs: isLastPara ? 650 : sentenceGapMs(para) });
+      continue;
+    }
     const raw = para.split(/(?<=[.!?»…])\s+/).map(s => s.trim()).filter(s => s.length > 3);
     let buf = '';
-    for (const s of raw) {
-      if ((buf+' '+s).trim().length > 280 && buf.length > 0) { sentences.push(buf.trim()); buf = s; }
-      else { buf = buf ? buf+' '+s : s; }
+    for (let si = 0; si < raw.length; si++) {
+      const s = raw[si];
+      if ((buf+' '+s).trim().length > 280 && buf.length > 0) {
+        result.push({ text: buf.trim(), gapMs: sentenceGapMs(buf) });
+        buf = s;
+      } else { buf = buf ? buf+' '+s : s; }
     }
-    if (buf.trim().length > 3) sentences.push(buf.trim());
+    if (buf.trim().length > 3)
+      result.push({ text: buf.trim(), gapMs: isLastPara ? 650 : sentenceGapMs(buf) });
   }
-  return sentences;
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
