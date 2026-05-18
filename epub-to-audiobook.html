@@ -1190,29 +1190,51 @@ function injectChapters(mp4Buffer, chapters) {
   const src = new Uint8Array(mp4Buffer);
   function u32(b,o) { return ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0; }
   function setU32(b,o,n) { b[o]=(n>>24)&0xFF; b[o+1]=(n>>16)&0xFF; b[o+2]=(n>>8)&0xFF; b[o+3]=n&0xFF; }
+  function setStr(b,o,s) { for(let i=0;i<s.length;i++) b[o+i]=s.charCodeAt(i); }
   function findBox(data,s,e,t) {
     const c=[...t].map(x=>x.charCodeAt(0)); let i=s;
     while(i+8<=e){const n=u32(data,i);if(n<8)break;if(data[i+4]===c[0]&&data[i+5]===c[1]&&data[i+6]===c[2]&&data[i+7]===c[3])return i;i+=n;}
     return -1;
   }
 
+  // ── Patch ftyp : isom → M4B  ──────────────────────────────────────────────
+  // ftyp layout : [size:4][type:4][major:4][version:4][compat…:4n]
+  // On écrit un nouveau ftyp 28 octets : M4B  + version 0 + M4A  + mp42 + isom
+  const newFtyp = new Uint8Array(28);
+  setU32(newFtyp, 0, 28);
+  setStr(newFtyp, 4,  'ftyp');
+  setStr(newFtyp, 8,  'M4B ');  // major brand
+  setU32(newFtyp, 12, 0);        // version
+  setStr(newFtyp, 16, 'M4B ');  // compat 1
+  setStr(newFtyp, 20, 'M4A ');  // compat 2
+  setStr(newFtyp, 24, 'isom');  // compat 3
+
+  // Taille de l'ancien ftyp
+  const oldFtypSize = findBox(src, 0, src.length, 'ftyp') !== -1 ? u32(src, 0) : 0;
+  const delta = newFtyp.length - oldFtypSize; // différence de taille (+4 si on passe de 24 à 28)
+
+  // ── Construire udta + chpl ────────────────────────────────────────────────
   const chpl = buildChpl();
-  const moovOff = findBox(src, 0, src.length, 'moov');
+  const moovOff = findBox(src, oldFtypSize, src.length, 'moov');
   if (moovOff === -1) return mp4Buffer;
   const moovSize = u32(src, moovOff);
 
-  // Crée udta contenant chpl et l'insère à la fin de moov
   const udta = new Uint8Array(8 + chpl.length);
   setU32(udta, 0, udta.length);
-  udta.set([0x75,0x64,0x74,0x61], 4); // 'udta'
+  setStr(udta, 4, 'udta');
   udta.set(chpl, 8);
 
+  // ── Assemblage final : nouveau ftyp + reste avec moov agrandi ─────────────
   const insertAt = moovOff + moovSize;
-  const out = new Uint8Array(src.length + udta.length);
-  out.set(src.subarray(0, insertAt));
-  out.set(udta, insertAt);
-  out.set(src.subarray(insertAt), insertAt + udta.length);
-  setU32(out, moovOff, moovSize + udta.length);
+  const out = new Uint8Array(newFtyp.length + (src.length - oldFtypSize) + udta.length);
+  let pos = 0;
+  out.set(newFtyp, pos); pos += newFtyp.length;
+  out.set(src.subarray(oldFtypSize, insertAt), pos);
+  const moovPosInOut = newFtyp.length + (moovOff - oldFtypSize);
+  pos += (insertAt - oldFtypSize);
+  out.set(udta, pos); pos += udta.length;
+  out.set(src.subarray(insertAt), pos);
+  setU32(out, moovPosInOut, moovSize + udta.length);
   return out.buffer;
 }
 
