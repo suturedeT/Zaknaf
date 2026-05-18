@@ -782,14 +782,34 @@ async function startConversion() {
   document.getElementById('progressPanel').style.display = 'block';
   document.getElementById('progressPanel').classList.add('fade-in');
 
-  // Sentences for all chapters
+  // Segmentation en blocs de lecture naturels (paragraphes / 300 mots max)
+  // Évite les micro-segments qui génèrent des silences de tête/queue TTS en cascade
   const allSentences = [];
   for (const ch of selectedChapters) {
-    const sents = ch.text
-      .split(/(?<=[.!?»…])\s+|(?<=\n)\s*/)
-      .map(s => s.replace(/\s+/g,' ').trim())
-      .filter(s => s.length > 4);
-    allSentences.push(...sents);
+    const paragraphs = ch.text
+      .split(/\n{2,}/)
+      .map(p => p.replace(/\s+/g,' ').trim())
+      .filter(p => p.length > 10);
+
+    for (const para of paragraphs) {
+      // Si le paragraphe est court (<= 300 chars), on l'envoie tel quel
+      if (para.length <= 300) {
+        allSentences.push(para);
+        continue;
+      }
+      // Sinon on coupe aux frontières de phrases tout en groupant les phrases courtes
+      const raw = para.split(/(?<=[.!?»…])\s+/).map(s => s.trim()).filter(s => s.length > 3);
+      let buf = '';
+      for (const s of raw) {
+        if ((buf + ' ' + s).trim().length > 280 && buf.length > 0) {
+          allSentences.push(buf.trim());
+          buf = s;
+        } else {
+          buf = buf ? buf + ' ' + s : s;
+        }
+      }
+      if (buf.trim().length > 3) allSentences.push(buf.trim());
+    }
   }
 
   log(`📚 ${selectedChapters.length} chapitres · ${allSentences.length} phrases à synthétiser`,'hi');
@@ -842,48 +862,95 @@ async function startConversion() {
   setPhase(1,'done');
   log('✓ Synthèse vocale complète','ok');
 
-  // ── Phase 2 : Concaténation MP3 directe (sans décodage PCM) ────────────
+  // ── Phase 2 : Décodage PCM + trim silences + assemblage fluide ──────────
   setPhase(2,'active');
-  setPhaseDetail(2,'Concaténation des segments MP3…');
-  log('🔧 Assemblage MP3 direct (léger, sans décodage)…','hi');
+  setPhaseDetail(2,'Décodage et assemblage audio…');
+  log('🔧 Assemblage avec suppression des silences inter-segments…','hi');
 
-  let totalBytes = 0;
-  for (let i = 0; i < total; i++) if (mp3Map[i]) totalBytes += mp3Map[i].byteLength;
+  // Décode chaque MP3 en PCM et trim les silences de tête/queue
+  const SILENCE_THRESHOLD = 0.003; // amplitude sous laquelle on considère un silence
+  const pcmSegments = [];
+  let totalSamples = 0;
 
-  const mergedMp3 = new Uint8Array(totalBytes);
-  let mp3Offset = 0;
   for (let i = 0; i < total; i++) {
     if (aborted) { onAbort(); return; }
-    if (mp3Map[i]) {
-      mergedMp3.set(new Uint8Array(mp3Map[i]), mp3Offset);
-      mp3Offset += mp3Map[i].byteLength;
-      mp3Map[i] = null; // libère la mémoire immédiatement
+    if (!mp3Map[i]) continue;
+
+    try {
+      const decoded = await audioCtx.decodeAudioData(mp3Map[i]);
+      mp3Map[i] = null;
+      const raw = decoded.getChannelData(0);
+      const sr  = decoded.sampleRate;
+
+      // Trim silence en tête
+      let start = 0;
+      while (start < raw.length && Math.abs(raw[start]) < SILENCE_THRESHOLD) start++;
+
+      // Trim silence en queue — garde 25ms de queue naturelle
+      const keepTail = Math.floor(sr * 0.025);
+      let end = raw.length - 1;
+      while (end > start && Math.abs(raw[end]) < SILENCE_THRESHOLD) end--;
+      end = Math.min(end + keepTail, raw.length - 1);
+
+      // Garde-fou : si le trim a tout mangé (segment quasi silencieux), on saute
+      if (end - start < sr * 0.02) continue;
+
+      const trimmed = raw.slice(start, end + 1);
+
+      // Fondu entrée/sortie de 5ms pour supprimer les clics aux jonctions
+      const fade = Math.min(Math.floor(sr * 0.005), Math.floor(trimmed.length / 2));
+      for (let f = 0; f < fade; f++) {
+        const g = f / fade;
+        trimmed[f] *= g;
+        trimmed[trimmed.length - 1 - f] *= g;
+      }
+
+      pcmSegments.push({ data: trimmed, sampleRate: sr });
+      totalSamples += trimmed.length;
+    } catch(e) {
+      log(`⚠ Segment ${i} non décodable, ignoré`,'err');
     }
-    if (i % 200 === 0) {
+
+    if (i % 20 === 0) {
       setPhaseBar(2, i / total * 100);
-      updateGlobal(0.85 + i / total * 0.1, `Assemblage : ${i+1}/${total}`);
+      updateGlobal(0.85 + i / total * 0.1, `Décodage : ${i+1}/${total}`);
       await sleep(0);
     }
   }
 
   setPhaseBar(2, 100);
-  const sizeMB = (totalBytes / 1024 / 1024).toFixed(1);
-  const durationMin = Math.round(totalBytes / (16000) / 60); // ~128kbps
-  log(`✓ Assemblage terminé — ${sizeMB} Mo (~${durationMin} min)`,'ok');
+  log(`✓ ${pcmSegments.length} segments décodés et nettoyés`,'ok');
   setPhase(2,'done');
 
-  // ── Phase 3 : Téléchargement MP3 ─────────────────────────────────────────
+  // ── Phase 3 : Encodage WAV et téléchargement ──────────────────────────
   setPhase(3,'active');
-  setPhaseDetail(3,'Création du fichier MP3…');
-  updateGlobal(0.97, 'Finalisation…');
-  log('📦 Création du fichier MP3…','hi');
+  setPhaseDetail(3,'Encodage WAV…');
+  updateGlobal(0.95, 'Finalisation…');
+  log('📦 Encodage du fichier audio final…','hi');
 
-  const blob = new Blob([mergedMp3], { type: 'audio/mpeg' });
-  const url  = URL.createObjectURL(blob);
+  // Assemblage PCM avec micro-pause naturelle entre blocs (15ms)
+  const outRate = pcmSegments[0]?.sampleRate || 24000;
+  const gapSamples = Math.floor(outRate * 0.015); // 15ms de silence inter-bloc
+  const gapBuf = new Float32Array(gapSamples); // zéros
+
+  const merged = new Float32Array(totalSamples + gapSamples * pcmSegments.length);
+  let offset = 0;
+  for (const seg of pcmSegments) {
+    merged.set(seg.data, offset);
+    offset += seg.data.length;
+    merged.set(gapBuf, offset);
+    offset += gapSamples;
+  }
+
+  // Encoder en WAV
+  const wavBlob = pcmToWav(merged, outRate);
+  const url = URL.createObjectURL(wavBlob);
+  const sizeMB = (wavBlob.size / 1024 / 1024).toFixed(1);
+  const durationMin = Math.round(merged.length / outRate / 60);
 
   setPhase(3,'done');
   updateGlobal(1, 'Terminé !');
-  log(`✓ Fichier MP3 prêt — ${sizeMB} Mo`,'ok');
+  log(`✓ Fichier audio prêt — ${sizeMB} Mo (~${durationMin} min)`,'ok');
 
   document.getElementById('abortBtn').style.display = 'none';
   showResult(url, bookMeta.title, durationMin, sizeMB, total);
@@ -893,22 +960,28 @@ async function startConversion() {
 // CLAUDE SSML BATCH
 // ─────────────────────────────────────────────────────────────────────────────
 async function generateSSMLBatch(sentences) {
-  const prompt = `Tu es un expert en lectures de livres audio en français pour Google Cloud TTS.
+  const prompt = `Tu es un expert en narration de livres audio en français pour Google Cloud TTS Neural2.
 
-Transforme chaque phrase numérotée en SSML valide (balises supportées : <break time="Xms"/>, <emphasis level="strong|moderate|reduced">, <prosody rate="X%" pitch="Xst">).
+Transforme chaque bloc numéroté en SSML valide pour une lecture FLUIDE et NATURELLE.
+Balises disponibles : <break time="Xms"/>, <emphasis level="strong|moderate|reduced">, <prosody rate="X%" pitch="Xst">
 
-Règles :
-- Virgule → <break time="160ms"/>, point-virgule/deux-points → <break time="250ms"/>, point → <break time="0ms"/> (la pause vient naturellement), tiret/incise → <break time="180ms"/>
-- Questions : dernier groupe <prosody pitch="+3st">
-- Exclamations : <prosody rate="106%" pitch="+2st"> sur le groupe exclamatif
-- Dialogues guillemets/tirets : adapte le ton
-- Mots forts : <emphasis level="moderate">
-- Descriptions lentes : <prosody rate="92%">
-- Chaque phrase DOIT être encapsulée dans <speak>…</speak>
-- Retourne UNIQUEMENT un tableau JSON : [{"i":0,"ssml":"<speak>…</speak>"},…]
-- Aucun texte autour, aucun markdown
+RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
+- NE PAS ajouter de <break> sur les virgules (la voix Neural2 gère les pauses naturellement)
+- NE PAS ajouter de <break> après les points (le TTS insère déjà une pause, ajouter une pause = double silence)
+- Point-virgule / deux-points → <break time="150ms"/> UNIQUEMENT si la phrase est longue (>15 mots)
+- Tiret d'incise (— …) → <break time="100ms"/> avant et après
+- Guillemets de dialogue (« » ou —) : <prosody rate="97%"> légèrement ralenti pour distinguer la voix
+- Questions : dernier groupe montant <prosody pitch="+2st">
+- Exclamations fortes : <prosody rate="104%" pitch="+1st"> sur le groupe exclamatif
+- Mots importants : <emphasis level="moderate"> avec parcimonie (max 1-2 par bloc)
+- Descriptions d'ambiance : <prosody rate="95%"> très subtil
+- OBJECTIF : que la lecture semble continue, sans à-coups, sans silences entre segments
 
-Phrases :
+Chaque bloc DOIT être encapsulé dans <speak>…</speak>.
+Retourne UNIQUEMENT un tableau JSON : [{"i":0,"ssml":"<speak>…</speak>"},…]
+Aucun texte autour, aucun markdown, aucune backtick.
+
+Blocs :
 ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
 
   try {
@@ -949,8 +1022,9 @@ async function googleTTS(ssml, retries = 3) {
           input:{ ssml },
           voice:{ languageCode:'fr-FR', name: selectedVoice },
           audioConfig:{
-            audioEncoding:'MP3',
-            speakingRate:1.0,
+            audioEncoding:'LINEAR16',
+            sampleRateHertz:24000,
+            speakingRate:1.04,
             pitch:0,
             effectsProfileId:['headphone-class-device']
           }
@@ -972,18 +1046,15 @@ async function googleTTS(ssml, retries = 3) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WAV ENCODER
+// WAV ENCODER (Float32Array PCM → WAV Blob)
 // ─────────────────────────────────────────────────────────────────────────────
-function audioBufferToWav(buffer) {
+function pcmToWav(floatData, sampleRate) {
   const numChannels = 1;
-  const sampleRate  = buffer.sampleRate;
-  const format      = 1; // PCM
   const bitDepth    = 16;
-  const data        = buffer.getChannelData(0);
-  const samples     = new Int16Array(data.length);
+  const samples     = new Int16Array(floatData.length);
 
-  for (let i = 0; i < data.length; i++) {
-    const s = Math.max(-1, Math.min(1, data[i]));
+  for (let i = 0; i < floatData.length; i++) {
+    const s = Math.max(-1, Math.min(1, floatData[i]));
     samples[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
   }
 
@@ -999,7 +1070,7 @@ function audioBufferToWav(buffer) {
   writeStr(8, 'WAVE');
   writeStr(12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, format, true);
+  view.setUint16(20, 1, true);  // PCM
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * numChannels * bitDepth / 8, true);
@@ -1051,13 +1122,13 @@ function showResult(url, title, durationMin, sizeMB, sentenceCount) {
   panel.style.display = 'block'; panel.classList.add('fade-in');
 
   document.getElementById('resultDesc').innerHTML =
-    `<strong>${title}</strong><br>${sentenceCount.toLocaleString('fr')} phrases · ${durationMin} minutes · ${sizeMB} Mo<br>
-    <span style="color:var(--ink-dim);font-size:11px">Fichier WAV · Voix ${selectedVoice} · Google Neural2</span>`;
+    `<strong>${title}</strong><br>${sentenceCount.toLocaleString('fr')} blocs · ${durationMin} minutes · ${sizeMB} Mo<br>
+    <span style="color:var(--ink-dim);font-size:11px">Fichier WAV · Voix ${selectedVoice} · Google Neural2 · Lecture fluide</span>`;
 
   const dl = document.getElementById('dlMp3');
   dl.href = url;
-  dl.download = (title || 'livre-audio').replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'') + '.mp3';
-  dl.textContent = `⬇ Télécharger MP3 (${sizeMB} Mo)`;
+  dl.download = (title || 'livre-audio').replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'') + '.wav';
+  dl.textContent = `⬇ Télécharger WAV (${sizeMB} Mo)`;
 }
 
 function restartApp() {
