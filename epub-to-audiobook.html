@@ -790,12 +790,12 @@ async function startConversion() {
     try {
       const { Muxer, ArrayBufferTarget } = await import('https://esm.sh/mp4-muxer@5');
       const target = new ArrayBufferTarget();
-      muxer = new Muxer({ target, audio:{ codec:'aac', sampleRate:24000, numberOfChannels:1 }, fastStart:'in-memory' });
+      muxer = new Muxer({ target, audio:{ codec:'aac', sampleRate:48000, numberOfChannels:1 }, fastStart:'in-memory' });
       aacEncoder = new AudioEncoder({
         output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
         error: e => log(`⚠ AAC: ${e.message}`,'err')
       });
-      aacEncoder.configure({ codec:'mp4a.40.2', sampleRate:24000, numberOfChannels:1, bitrate:96000 });
+      aacEncoder.configure({ codec:'mp4a.40.2', sampleRate:48000, numberOfChannels:1, bitrate:96000 });
       log('🎵 Encodeur M4B initialisé — pipeline chapitre par chapitre','hi');
     } catch(e) {
       log(`⚠ M4B indisponible (${e.message}) — fallback WAV`,'err');
@@ -878,7 +878,7 @@ async function startConversion() {
     setPhase(3,'active');
     setPhaseDetail(3, `Ch.${ci+1}/${totalChapters} — ${ch.title}`);
 
-    const sr = 24000, gap = Math.floor(sr*0.015);
+    const sr = 48000, gap = Math.floor(sr*0.015);
     const totalSmp = pcmSegs.reduce((a,s) => a+s.length, 0);
     const merged = new Float32Array(totalSmp + gap*pcmSegs.length);
     let off = 0;
@@ -1012,7 +1012,7 @@ async function googleTTS(ssml, retries = 3) {
           voice:{ languageCode:'fr-FR', name: selectedVoice },
           audioConfig:{
             audioEncoding:'LINEAR16',
-            sampleRateHertz:24000,
+            sampleRateHertz:48000,
             speakingRate:1.04,
             pitch:0,
             effectsProfileId:['headphone-class-device']
