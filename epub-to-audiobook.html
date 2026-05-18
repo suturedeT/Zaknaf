@@ -777,7 +777,7 @@ async function startConversion() {
   document.getElementById('progressPanel').style.display = 'block';
   document.getElementById('progressPanel').classList.add('fade-in');
 
-  const BATCH = 8, CONCURRENCY = 4, SILENCE = 0.003, SR = 48000;
+  const BATCH = 8, CONCURRENCY = 4, SILENCE = 0.003, SR = 44100;
   const totalChapters = selectedChapters.length;
   const allMp3Parts = []; // accumule les chunks MP3 encodés
   let totalSentences = 0, totalSamples = 0;
@@ -958,6 +958,8 @@ RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
 - Exclamations fortes : <prosody rate="104%" pitch="+1st"> sur le groupe exclamatif
 - Mots importants : <emphasis level="moderate"> avec parcimonie (max 1-2 par bloc)
 - Descriptions d'ambiance : <prosody rate="95%"> très subtil
+- Noms propres anglais (personnages, lieux) : entoure-les de <lang xml:lang="en-GB">nom</lang> pour une prononciation anglaise (ex: <lang xml:lang="en-GB">Elric</lang>, <lang xml:lang="en-GB">Stormbringer</lang>)
+- Critères noms propres : commence par une majuscule, sonorité anglo-saxonne, pas un mot français courant
 - OBJECTIF : que la lecture semble continue, sans à-coups, sans silences entre segments
 
 Chaque bloc DOIT être encapsulé dans <speak>…</speak>.
@@ -1006,7 +1008,7 @@ async function googleTTS(ssml, retries = 3) {
           voice:{ languageCode:'fr-FR', name: selectedVoice },
           audioConfig:{
             audioEncoding:'LINEAR16',
-            sampleRateHertz:48000,
+            sampleRateHertz:44100,
             speakingRate:1.04,
             pitch:0,
             effectsProfileId:['headphone-class-device']
