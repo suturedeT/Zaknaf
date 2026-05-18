@@ -1133,10 +1133,11 @@ function showResult(files, bookTitle, sentenceCount) {
   btns.innerHTML = '';
   files.forEach((f, i) => {
     const safe = (f.title || `chapitre-${i+1}`).replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'');
+    const num  = String(i + 1).padStart(2, '0');
     const a = document.createElement('a');
     a.className = 'btn-dl btn-dl-primary';
     a.href = f.url;
-    a.download = safe + '.wav';
+    a.download = `${num} - ${safe}.wav`;
     a.textContent = files.length === 1
       ? `⬇ Télécharger WAV (${f.sizeMB} Mo)`
       : `⬇ ${f.title} (${f.sizeMB} Mo)`;
