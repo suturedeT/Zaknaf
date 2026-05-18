@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ÉpubSon — Convertisseur Livre Audio</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.0/lame.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap');
 
@@ -778,10 +779,10 @@ async function startConversion() {
 
   const BATCH = 8, CONCURRENCY = 4, SILENCE = 0.003, SR = 48000;
   const totalChapters = selectedChapters.length;
-  const allPcmSegs = [];
-  let totalSentences = 0;
+  const allMp3Parts = []; // accumule les chunks MP3 encodés
+  let totalSentences = 0, totalSamples = 0;
 
-  // ── Boucle principale : SSML + TTS + décodage chapitre par chapitre ───────
+  // ── Boucle principale : chapitre par chapitre ─────────────────────────────
   for (let ci = 0; ci < totalChapters; ci++) {
     if (aborted) { onAbort(); return; }
     const ch = selectedChapters[ci];
@@ -806,7 +807,7 @@ async function startConversion() {
       results.forEach((ssml, j) => { ssmlMap[i+j] = ssml; });
       ssmlDone += batch.length;
       setPhaseBar(0, ssmlDone/total*100);
-      updateGlobal(gBase + gSlice*(ssmlDone/total*0.35), `Ch.${ci+1} — SSML ${ssmlDone}/${total}`);
+      updateGlobal(gBase + gSlice*(ssmlDone/total*0.30), `Ch.${ci+1} — SSML ${ssmlDone}/${total}`);
     }
     setPhase(0,'done');
 
@@ -822,13 +823,14 @@ async function startConversion() {
         ttsDone++;
         setPhaseBar(1, ttsDone/total*100);
         setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
-        updateGlobal(gBase + gSlice*(0.35 + ttsDone/total*0.45), `Ch.${ci+1} TTS`);
+        updateGlobal(gBase + gSlice*(0.30 + ttsDone/total*0.40), `Ch.${ci+1} TTS`);
       }));
     }
     setPhase(1,'done');
 
     // Phase 2 : Décodage + trim — libère mp3Map immédiatement
     setPhase(2,'active');
+    const chPcmSegs = [];
     for (let i = 0; i < total; i++) {
       if (aborted) { onAbort(); return; }
       if (!mp3Map[i]) continue;
@@ -843,52 +845,57 @@ async function startConversion() {
         const t = raw.slice(s, e+1);
         const fade = Math.min(Math.floor(sr*0.005), Math.floor(t.length/2));
         for (let f = 0; f < fade; f++) { const g=f/fade; t[f]*=g; t[t.length-1-f]*=g; }
-        allPcmSegs.push(t);
+        chPcmSegs.push(t);
       } catch(err) { log(`⚠ Segment ${i} ignoré`,'err'); }
-      if (i%20===0) { setPhaseBar(2, i/total*100); updateGlobal(gBase+gSlice*(0.80+i/total*0.15), `Ch.${ci+1} décodage`); await sleep(0); }
+      if (i%20===0) { setPhaseBar(2, i/total*100); updateGlobal(gBase+gSlice*(0.70+i/total*0.20), `Ch.${ci+1} décodage`); await sleep(0); }
     }
     setPhaseBar(2,100); setPhase(2,'done');
 
+    // Phase 3 : Encodage MP3 du chapitre — libère PCM immédiatement
     setPhase(3,'active');
-    setPhaseDetail(3, `${ci+1}/${totalChapters} chapitres traités`);
-    setPhaseBar(3, (ci+1)/totalChapters*100);
-    updateGlobal((ci+1)/totalChapters * 0.95, `Ch.${ci+1}/${totalChapters} terminé`);
-    setPhase(3,'done');
+    setPhaseDetail(3, `MP3 Ch.${ci+1}/${totalChapters} — ${ch.title}`);
+    log(`🎵 Encodage MP3 : ${ch.title}…`,'hi');
+
+    const enc = new lamejs.Mp3Encoder(1, SR, 128);
+    const FRAME = 1152;
+    const gapI16 = new Int16Array(Math.floor(SR * 0.015));
+
+    for (const seg of chPcmSegs) {
+      const i16 = float32ToInt16(seg);
+      totalSamples += i16.length;
+      for (let i = 0; i < i16.length; i += FRAME) {
+        const chunk = i16.subarray(i, Math.min(i+FRAME, i16.length));
+        const buf = enc.encodeBuffer(chunk);
+        if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
+      }
+      // silence inter-segment
+      for (let i = 0; i < gapI16.length; i += FRAME) {
+        const buf = enc.encodeBuffer(gapI16.subarray(i, Math.min(i+FRAME, gapI16.length)));
+        if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
+      }
+    }
+    const flushed = enc.flush();
+    if (flushed.length > 0) allMp3Parts.push(new Uint8Array(flushed));
+    chPcmSegs.length = 0; // libère PCM
+
+    setPhaseBar(3,100); setPhase(3,'done');
+    updateGlobal((ci+1)/totalChapters * 0.97, `Ch.${ci+1}/${totalChapters} encodé`);
+    log(`✓ Ch.${ci+1} MP3 encodé`,'ok');
     await sleep(0);
   }
 
-  // ── Assemblage final → WAV par blobs (pas d'allocation géante) ───────────
-  setPhase(3,'active');
-  setPhaseDetail(3,'Assemblage WAV final…');
-  updateGlobal(0.96,'Assemblage…');
-  log('📦 Assemblage WAV unique…','hi');
-  await sleep(0);
+  // ── Finalisation MP3 ──────────────────────────────────────────────────────
+  updateGlobal(0.99,'Finalisation…');
+  const mp3Blob = new Blob(allMp3Parts, { type:'audio/mpeg' });
+  const url = URL.createObjectURL(mp3Blob);
+  const sizeMB = (mp3Blob.size/1024/1024).toFixed(1);
+  const durMin = Math.round(totalSamples/SR/60);
 
-  const gap = Math.floor(SR * 0.015);
-  const totalSmp = allPcmSegs.reduce((a,s) => a+s.length, 0);
-  const totalSmpWithGaps = totalSmp + gap * allPcmSegs.length;
-
-  // En-tête WAV (44 octets) calculé à l'avance
-  const wavHeader = buildWavHeader(totalSmpWithGaps, SR);
-  const parts = [wavHeader];
-  const gapInt16 = new Int16Array(gap); // silence entre segments
-  for (const seg of allPcmSegs) {
-    parts.push(float32ToInt16(seg).buffer);
-    parts.push(gapInt16.buffer);
-  }
-  allPcmSegs.length = 0; // libère la mémoire
-
-  const wavBlob = new Blob(parts, { type:'audio/wav' });
-  const url = URL.createObjectURL(wavBlob);
-  const sizeMB = (wavBlob.size/1024/1024).toFixed(1);
-  const durMin = Math.round(totalSmpWithGaps/SR/60);
-
-  setPhase(3,'done');
   updateGlobal(1,'Terminé !');
-  log(`✓ WAV prêt — ${sizeMB} Mo (~${durMin} min)`,'ok');
+  log(`✓ MP3 prêt — ${sizeMB} Mo (~${durMin} min)`,'ok');
 
   document.getElementById('abortBtn').style.display = 'none';
-  showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'wav' }], bookMeta.title, totalSentences);
+  showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'mp3' }], bookMeta.title, totalSentences);
 }
 
 function segmentChapter(ch) {
