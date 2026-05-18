@@ -892,7 +892,8 @@ async function startConversion() {
 
   // ── Finalisation MP3 ──────────────────────────────────────────────────────
   updateGlobal(0.99,'Finalisation…');
-  const mp3Blob = new Blob(allMp3Parts, { type:'audio/mpeg' });
+  const id3Parts = buildID3v2(bookMeta.title, bookMeta.author);
+  const mp3Blob = new Blob([...id3Parts, ...allMp3Parts], { type:'audio/mpeg' });
   const url = URL.createObjectURL(mp3Blob);
   const sizeMB = (mp3Blob.size/1024/1024).toFixed(1);
   const durMin = Math.round(totalSamples/SR/60);
@@ -1028,6 +1029,36 @@ async function googleTTS(ssml, retries = 3) {
       await sleep(1000 * (attempt + 1));
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ID3v2.3 TAG BUILDER — requis par Apple Books pour reconnaître le fichier
+// ─────────────────────────────────────────────────────────────────────────────
+function buildID3v2(title, author) {
+  const enc = new TextEncoder();
+  function makeFrame(id, text) {
+    const textBytes = enc.encode(text);
+    const data = new Uint8Array(1 + textBytes.length);
+    data[0] = 0x03; // UTF-8
+    data.set(textBytes, 1);
+    const frame = new Uint8Array(10 + data.length);
+    frame.set(enc.encode(id), 0);
+    const sz = data.length;
+    frame[4]=(sz>>24)&0xFF; frame[5]=(sz>>16)&0xFF; frame[6]=(sz>>8)&0xFF; frame[7]=sz&0xFF;
+    frame.set(data, 10);
+    return frame;
+  }
+  const frames = [
+    makeFrame('TIT2', title  || 'Audiobook'),
+    makeFrame('TPE1', author || 'Auteur inconnu'),
+    makeFrame('TALB', title  || 'Audiobook'),
+    makeFrame('TCON', 'Audiobook'),
+  ];
+  const total = frames.reduce((s,f) => s + f.length, 0);
+  const hdr = new Uint8Array(10);
+  hdr[0]=0x49; hdr[1]=0x44; hdr[2]=0x33; hdr[3]=0x03; hdr[4]=0x00; hdr[5]=0x00;
+  hdr[6]=(total>>21)&0x7F; hdr[7]=(total>>14)&0x7F; hdr[8]=(total>>7)&0x7F; hdr[9]=total&0x7F;
+  return [hdr, ...frames];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
