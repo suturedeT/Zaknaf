@@ -606,7 +606,7 @@ header {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ↓↓ REMPLACE PAR TON HASH (obtenu via ?setup) ↓↓
-const PASSWORD_HASH = 'ead52838909eb6864934afb2f786585385142d66821bbae74a97bb45ebce44b6';
+const PASSWORD_HASH = '';
 // ↑↑──────────────────────────────────────────↑↑
 
 async function sha256(str) {
@@ -679,22 +679,13 @@ window.addEventListener('DOMContentLoaded', initAuth);
 // VOICES
 // ─────────────────────────────────────────────────────────────────────────────
 const VOICES = [
-  // ── Neural2 ────────────────────────────────────────────────────────────────
-  { name:'fr-FR-Neural2-C', label:'Sophie',    gen:'Femme', type:'n2',     desc:'Chaleureuse & naturelle' },
-  { name:'fr-FR-Neural2-A', label:'Claire',    gen:'Femme', type:'n2',     desc:'Douce & narrative' },
-  { name:'fr-FR-Neural2-B', label:'Laurent',   gen:'Homme', type:'n2',     desc:'Grave & posé' },
-  { name:'fr-FR-Neural2-D', label:'Thomas',    gen:'Homme', type:'n2',     desc:'Clair & moderne' },
-  { name:'fr-FR-Neural2-E', label:'Élise',     gen:'Femme', type:'n2',     desc:'Expressive' },
-  // ── WaveNet ────────────────────────────────────────────────────────────────
-  { name:'fr-FR-Wavenet-C', label:'Léa',       gen:'Femme', type:'wn',     desc:'WaveNet narratif' },
-  { name:'fr-FR-Wavenet-B', label:'Marc',      gen:'Homme', type:'wn',     desc:'WaveNet grave' },
-  // ── Chirp3-HD (dernière génération — plus naturel, SSML simplifié) ─────────
-  { name:'fr-FR-Chirp3-HD-Aoede',        label:'Aoede',    gen:'Femme', type:'c3hd', desc:'Chirp3 · fluide & narrative' },
-  { name:'fr-FR-Chirp3-HD-Kore',         label:'Kore',     gen:'Femme', type:'c3hd', desc:'Chirp3 · chaleureuse' },
-  { name:'fr-FR-Chirp3-HD-Zephyr',       label:'Zephyr',   gen:'Femme', type:'c3hd', desc:'Chirp3 · aérienne & naturelle' },
-  { name:'fr-FR-Chirp3-HD-Charon',       label:'Charon',   gen:'Homme', type:'c3hd', desc:'Chirp3 · grave & posé' },
-  { name:'fr-FR-Chirp3-HD-Fenrir',       label:'Fenrir',   gen:'Homme', type:'c3hd', desc:'Chirp3 · expressif' },
-  { name:'fr-FR-Chirp3-HD-Puck',         label:'Puck',     gen:'Homme', type:'c3hd', desc:'Chirp3 · dynamique' },
+  { name:'fr-FR-Neural2-C', label:'Sophie',  gen:'Femme', type:'n2',  desc:'Chaleureuse & naturelle' },
+  { name:'fr-FR-Neural2-A', label:'Claire',  gen:'Femme', type:'n2',  desc:'Douce & narrative' },
+  { name:'fr-FR-Neural2-B', label:'Laurent', gen:'Homme', type:'n2',  desc:'Grave & posé' },
+  { name:'fr-FR-Neural2-D', label:'Thomas',  gen:'Homme', type:'n2',  desc:'Clair & moderne' },
+  { name:'fr-FR-Neural2-E', label:'Élise',   gen:'Femme', type:'n2',  desc:'Expressive' },
+  { name:'fr-FR-Wavenet-C', label:'Léa',     gen:'Femme', type:'wn',  desc:'WaveNet narratif' },
+  { name:'fr-FR-Wavenet-B', label:'Marc',    gen:'Homme', type:'wn',  desc:'WaveNet grave' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1131,33 +1122,22 @@ ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
 // ─────────────────────────────────────────────────────────────────────────────
 // GOOGLE TTS
 // ─────────────────────────────────────────────────────────────────────────────
-// Chirp3-HD ne supporte pas <prosody>, <emphasis>, <lang> → on les retire en conservant le texte
-function sanitizeSSMLForChirp3(ssml) {
-  return ssml
-    .replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1')
-    .replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1')
-    .replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1')
-    .replace(/<say-as[^>]*>([\s\S]*?)<\/say-as>/g, '$1');
-}
-
-function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
-
 async function googleTTS(ssml, retries = 3) {
-  const chirp3 = isChirp3(selectedVoice);
-  const inputSSML = chirp3 ? sanitizeSSMLForChirp3(ssml) : ssml;
-  const audioConfig = chirp3
-    ? { audioEncoding:'LINEAR16', sampleRateHertz:44100 }
-    : { audioEncoding:'LINEAR16', sampleRateHertz:44100, speakingRate:1.04, pitch:0, effectsProfileId:['headphone-class-device'] };
-
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${gcpApiKey}`, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
-          input:{ ssml: inputSSML },
+          input:{ ssml },
           voice:{ languageCode:'fr-FR', name: selectedVoice },
-          audioConfig
+          audioConfig:{
+            audioEncoding:'LINEAR16',
+            sampleRateHertz:44100,
+            speakingRate:1.04,
+            pitch:0,
+            effectsProfileId:['headphone-class-device']
+          }
         })
       });
       if (!resp.ok) {
@@ -1312,7 +1292,7 @@ function showResult(files, bookTitle, sentenceCount) {
 
   document.getElementById('resultDesc').innerHTML =
     `<strong>${bookTitle}</strong><br>${sentenceCount.toLocaleString('fr')} blocs · ${totalMin} min · ${totalSize} Mo<br>
-    <span style="color:var(--ink-dim);font-size:11px">Voix ${selectedVoice} · ${isChirp3(selectedVoice)?'Google Chirp3-HD':'Google Neural2'} · ${fmt}</span>`;
+    <span style="color:var(--ink-dim);font-size:11px">Voix ${selectedVoice} · Google Neural2 · ${fmt}</span>`;
 
   const btns = document.getElementById('downloadBtns');
   btns.innerHTML = '';
