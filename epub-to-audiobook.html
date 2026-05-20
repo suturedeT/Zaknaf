@@ -1051,14 +1051,29 @@ function sentenceGapMs(text) {
 // Normalise le texte français pour préserver les élisions/liaisons d'apostrophe.
 // Les ePub utilisent souvent ' (U+2019), parfois avec des NBSP autour, ce qui
 // fait que Google TTS lit "l ' homme" au lieu de "l'homme" (élision cassée).
+// Post-traitement du SSML : aucun élément (balise, espace) ne doit s'intercaler
+// entre une élision (l', d', n', qu', etc.) et le mot suivant.
+function fixSSMLElisions(ssml) {
+  // 1) espace juste après l'apostrophe d'élision → on retire
+  ssml = ssml.replace(/\b(l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd)'\s+(\p{L})/giu, "$1'$2");
+  // 2) balise ouvrante glissée entre élision et mot → on la déplace AVANT
+  ssml = ssml.replace(/\b(l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd)'(<[^/][^>]*>)(\p{L})/giu, "$2$1'$3");
+  // 3) balise fermante juste après l'apostrophe → on l'envoie après le mot
+  ssml = ssml.replace(/\b(l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd)'(<\/[^>]+>)(\p{L}+)/giu, "$1'$3$2");
+  return ssml;
+}
+
 function normalizeFrenchText(s) {
   return s
-    // Toutes les variantes d'apostrophe → apostrophe ASCII
-    .replace(/[‘’ʼʹ`´́]/g, "'")
+    // Toutes les variantes d'apostrophe / quote / accent flottant → ' ASCII
+    .replace(/[‘’‚‛ʹʻʼʽ`´́]/g, "'")
     // Espaces insécables et fines → espace normal
     .replace(/[     ]/g, ' ')
-    // Caractères zéro-largeur (souvent dans les ePub)
-    .replace(/[​‌‍﻿]/g, '')
+    // Caractères invisibles à supprimer (cassent les mots en TTS) :
+    //   U+00AD SOFT HYPHEN : invisible mais Google TTS y coupe le mot →
+    //   "exemple" devient "x emple", "exact" devient "x act", etc.
+    //   Plus les zero-width (U+200B/C/D), word-joiner (U+2060), BOM (U+FEFF)
+    .replace(/[­​‌‍⁠﻿]/g, '')
     // Resserre les apostrophes d'élision : "l ' homme" / "l' homme" → "l'homme"
     .replace(/(\p{L})\s*'\s*(\p{L})/gu, "$1'$2");
 }
@@ -1098,7 +1113,11 @@ Transforme chaque bloc numéroté en SSML valide pour une lecture FLUIDE et NATU
 Balises disponibles : <break time="Xms"/>, <emphasis level="strong|moderate|reduced">, <prosody rate="X%" pitch="Xst">
 
 RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
-- ÉLISIONS / LIAISONS D'APOSTROPHE : NE JAMAIS séparer une apostrophe et le mot qui suit. "l'homme", "d'abord", "qu'il", "jusqu'au", "aujourd'hui" doivent rester COLLÉS dans le SSML, sans espace, sans balise entre les deux. Aucune balise SSML ne doit s'intercaler entre une lettre élidée (l', d', n', m', t', s', c', j', qu', lorsqu', puisqu', quoiqu', jusqu') et le mot suivant.
+- ÉLISIONS / LIAISONS D'APOSTROPHE — RÈGLE ABSOLUE :
+  Une élision (l', d', n', m', t', s', c', j', qu', lorsqu', puisqu', quoiqu', jusqu', aujourd') et le mot qui suit forment UNE SEULE UNITÉ phonétique. Aucune balise, aucun espace ne doit jamais s'intercaler entre l'apostrophe et le mot suivant.
+  ✓ CORRECT   : "Il <emphasis>n'aime</emphasis> pas." / "<prosody rate=\"95%\">l'homme partit.</prosody>"
+  ✗ INTERDIT  : "Il n'<emphasis>aime</emphasis> pas." / "l' homme" / "n' est" / "qu' il"
+  Si une emphase ou prosodie commence par un mot élidé, la balise englobe l'élision ET le mot ensemble.
 - NE PAS ajouter de <break> sur les virgules (la voix Neural2 gère les pauses naturellement)
 - NE PAS ajouter de <break> après les points (le TTS insère déjà une pause, ajouter une pause = double silence)
 - Point-virgule / deux-points → <break time="150ms"/> UNIQUEMENT si la phrase est longue (>15 mots)
@@ -1136,7 +1155,8 @@ ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
     const arr = JSON.parse(match[0]);
     return sentences.map((s, i) => {
       const found = arr.find(x => x.i === i);
-      return found?.ssml || `<speak>${escapeXml(s)}</speak>`;
+      const ssml = found?.ssml || `<speak>${escapeXml(s)}</speak>`;
+      return fixSSMLElisions(ssml);
     });
   } catch(e) {
     console.error('Claude SSML error:', e);
