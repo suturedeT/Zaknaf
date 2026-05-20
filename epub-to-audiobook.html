@@ -1054,17 +1054,31 @@ function sentenceGapMs(text) {
 // Post-traitement du SSML : aucun élément (balise, espace) ne doit s'intercaler
 // entre une élision (l', d', n', qu', etc.) et le mot suivant.
 function fixSSMLElisions(ssml) {
-  // 1) espace juste après l'apostrophe d'élision → on retire
-  ssml = ssml.replace(/\b(l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd)'\s+(\p{L})/giu, "$1'$2");
-  // 2) balise ouvrante glissée entre élision et mot → on la déplace AVANT
-  ssml = ssml.replace(/\b(l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd)'(<[^/][^>]*>)(\p{L})/giu, "$2$1'$3");
-  // 3) balise fermante juste après l'apostrophe → on l'envoie après le mot
-  ssml = ssml.replace(/\b(l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd)'(<\/[^>]+>)(\p{L}+)/giu, "$1'$3$2");
+  // Recompose les accents combinants AVANT les regex, sinon \p{L} ne matche que
+  // la lettre nue et l'accent reste détaché ("l'e ́cole" cassé en deux pour TTS).
+  ssml = ssml.normalize('NFC');
+  const ELI = 'l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd';
+  // Plusieurs passes pour gérer les imbrications (ex: <p><emphasis>l'</emphasis>âme</p>)
+  let prev, pass = 0;
+  do {
+    prev = ssml;
+    // 1) espace(s)/tag(s) auto-fermants entre apostrophe et lettre suivante → retire
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})'(?:\\s|<[^>]+/>)+(\\p{L})`, 'giu'), "$1'$2");
+    // 2) balise ouvrante glissée entre élision et mot → on la déplace AVANT l'élision
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})'(<[^/][^>]*[^/]>)(\\p{L})`, 'giu'), "$2$1'$3");
+    // 3) balise fermante juste après l'apostrophe → on l'envoie après le mot
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})'(</[^>]+>)\\s*(\\p{L}+)`, 'giu'), "$1'$3$2");
+    pass++;
+  } while (prev !== ssml && pass < 5);
   return ssml;
 }
 
 function normalizeFrenchText(s) {
   return s
+    // 0) NFC : recompose les accents combinants → "e" + ́ devient "é" précomposé,
+    //    sinon \p{L} ne matche que la lettre nue et l'accent reste flottant,
+    //    cassant la concaténation "l'é..." vs "l'e ́...".
+    .normalize('NFC')
     // Toutes les variantes d'apostrophe / quote / accent flottant → ' ASCII
     .replace(/[‘’‚‛ʹʻʼʽ`´́]/g, "'")
     // Espaces insécables et fines → espace normal
@@ -1114,10 +1128,10 @@ Balises disponibles : <break time="Xms"/>, <emphasis level="strong|moderate|redu
 
 RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
 - ÉLISIONS / LIAISONS D'APOSTROPHE — RÈGLE ABSOLUE :
-  Une élision (l', d', n', m', t', s', c', j', qu', lorsqu', puisqu', quoiqu', jusqu', aujourd') et le mot qui suit forment UNE SEULE UNITÉ phonétique. Aucune balise, aucun espace ne doit jamais s'intercaler entre l'apostrophe et le mot suivant.
-  ✓ CORRECT   : "Il <emphasis>n'aime</emphasis> pas." / "<prosody rate=\"95%\">l'homme partit.</prosody>"
-  ✗ INTERDIT  : "Il n'<emphasis>aime</emphasis> pas." / "l' homme" / "n' est" / "qu' il"
-  Si une emphase ou prosodie commence par un mot élidé, la balise englobe l'élision ET le mot ensemble.
+  Une élision (l', d', n', m', t', s', c', j', qu', lorsqu', puisqu', quoiqu', jusqu', aujourd') et le mot qui suit forment UNE SEULE UNITÉ phonétique. Aucune balise, aucun espace ne doit jamais s'intercaler entre l'apostrophe et le mot suivant — y compris quand ce mot commence par une voyelle accentuée (à, é, è, ê, î, ô, û, â, ï…).
+  ✓ CORRECT   : "Il <emphasis>n'aime</emphasis> pas." / "<prosody rate=\"95%\">l'épée brillait</prosody>" / "<emphasis>l'âme</emphasis>" / "qu'à"
+  ✗ INTERDIT  : "Il n'<emphasis>aime</emphasis> pas." / "l' épée" / "n' était" / "qu' à" / "l'<emphasis>âme</emphasis>" / "d'<prosody>écrire</prosody>"
+  Si une emphase ou prosodie concerne un mot élidé, la balise englobe TOUJOURS l'élision ET le mot complet (avec ses accents) ensemble : <emphasis>l'épée</emphasis>, JAMAIS l'<emphasis>épée</emphasis>.
 - NE PAS ajouter de <break> sur les virgules (la voix Neural2 gère les pauses naturellement)
 - NE PAS ajouter de <break> après les points (le TTS insère déjà une pause, ajouter une pause = double silence)
 - Point-virgule / deux-points → <break time="150ms"/> UNIQUEMENT si la phrase est longue (>15 mots)
