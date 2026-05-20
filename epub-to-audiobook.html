@@ -1079,6 +1079,15 @@ function fixSSMLElisions(ssml) {
     ssml = ssml.replace(new RegExp(`\\b(${ELI})${APOS}(</[^>]+>)\\s*(\\p{L}+)`, 'giu'), `$1${APOS}$3$2`);
     pass++;
   } while (prev !== ssml && pass < 5);
+
+  // 4) STRATÉGIE ULTIME : wrap chaque élision avec <sub alias=""> pour FORCER
+  //    Google TTS à lire la liaison comme un seul mot. Même si l'apostrophe
+  //    typographique ne suffit pas, "<sub alias='lépier'>l'épier</sub>" oblige
+  //    le TTS à prononcer "lépier" en un seul mot, sans rupture possible.
+  ssml = ssml.replace(
+    new RegExp(`\\b(${ELI})${APOS}(\\p{L}+)`, 'giu'),
+    (m, eli, word) => `<sub alias="${eli}${word}">${m}</sub>`
+  );
   return ssml;
 }
 
@@ -1199,7 +1208,10 @@ function sanitizeSSMLForChirp3(ssml) {
     .replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1')
     .replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1')
     .replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1')
-    .replace(/<say-as[^>]*>([\s\S]*?)<\/say-as>/g, '$1');
+    .replace(/<say-as[^>]*>([\s\S]*?)<\/say-as>/g, '$1')
+    // <sub alias="X">Y</sub> non supporté par Chirp3 → on garde l'alias (X) qui
+    // est la forme concaténée sans apostrophe, garantissant la liaison.
+    .replace(/<sub\s+alias="([^"]*)"[^>]*>[\s\S]*?<\/sub>/g, '$1');
 }
 
 function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
