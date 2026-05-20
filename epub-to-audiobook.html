@@ -1080,14 +1080,22 @@ function fixSSMLElisions(ssml) {
     pass++;
   } while (prev !== ssml && pass < 5);
 
-  // 4) STRATÉGIE ULTIME : wrap chaque élision avec <sub alias=""> pour FORCER
-  //    Google TTS à lire la liaison comme un seul mot. Même si l'apostrophe
-  //    typographique ne suffit pas, "<sub alias='lépier'>l'épier</sub>" oblige
-  //    le TTS à prononcer "lépier" en un seul mot, sans rupture possible.
+  // 4) FUSION INLINE DE L'ÉLISION : on supprime carrément l'apostrophe pour
+  //    que Google TTS lise le bloc comme un seul mot.
+  //      "l'épier" → "lépier"   "L'Éclat" → "LÉclat"   "c'était" → "cétait"
+  //    Plus d'apostrophe dans le SSML envoyé = aucune possibilité que Google
+  //    TTS la traite comme un séparateur de mot et casse la liaison.
   ssml = ssml.replace(
     new RegExp(`\\b(${ELI})${APOS}(\\p{L}+)`, 'giu'),
-    (m, eli, word) => `<sub alias="${eli}${word}">${m}</sub>`
+    '$1$2'
   );
+
+  // 5) ANTI-RUPTURE : retire TOUS les <emphasis> et <prosody>. Ces balises
+  //    peuvent introduire des micro-pauses au début/fin de leur contenu,
+  //    ce qui suffit à casser une liaison sur Google TTS Neural2. On garde
+  //    <speak>, <break>, <lang>, <p>, <s> qui sont structurels et neutres.
+  ssml = ssml.replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1');
+  ssml = ssml.replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1');
   return ssml;
 }
 
