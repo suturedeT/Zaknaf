@@ -1048,9 +1048,24 @@ function sentenceGapMs(text) {
   return 400;                          // défaut
 }
 
+// Normalise le texte français pour préserver les élisions/liaisons d'apostrophe.
+// Les ePub utilisent souvent ' (U+2019), parfois avec des NBSP autour, ce qui
+// fait que Google TTS lit "l ' homme" au lieu de "l'homme" (élision cassée).
+function normalizeFrenchText(s) {
+  return s
+    // Toutes les variantes d'apostrophe → apostrophe ASCII
+    .replace(/[‘’ʼʹ`´́]/g, "'")
+    // Espaces insécables et fines → espace normal
+    .replace(/[     ]/g, ' ')
+    // Caractères zéro-largeur (souvent dans les ePub)
+    .replace(/[​‌‍﻿]/g, '')
+    // Resserre les apostrophes d'élision : "l ' homme" / "l' homme" → "l'homme"
+    .replace(/(\p{L})\s*'\s*(\p{L})/gu, "$1'$2");
+}
+
 function segmentChapter(ch) {
   const result = [];
-  const paragraphs = ch.text.split(/\n{2,}/).map(p => p.replace(/\s+/g,' ').trim()).filter(p => p.length > 10);
+  const paragraphs = ch.text.split(/\n{2,}/).map(p => normalizeFrenchText(p.replace(/\s+/g,' ')).trim()).filter(p => p.length > 10);
   for (let pi = 0; pi < paragraphs.length; pi++) {
     const para = paragraphs[pi];
     const isLastPara = pi === paragraphs.length - 1;
@@ -1083,6 +1098,7 @@ Transforme chaque bloc numéroté en SSML valide pour une lecture FLUIDE et NATU
 Balises disponibles : <break time="Xms"/>, <emphasis level="strong|moderate|reduced">, <prosody rate="X%" pitch="Xst">
 
 RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
+- ÉLISIONS / LIAISONS D'APOSTROPHE : NE JAMAIS séparer une apostrophe et le mot qui suit. "l'homme", "d'abord", "qu'il", "jusqu'au", "aujourd'hui" doivent rester COLLÉS dans le SSML, sans espace, sans balise entre les deux. Aucune balise SSML ne doit s'intercaler entre une lettre élidée (l', d', n', m', t', s', c', j', qu', lorsqu', puisqu', quoiqu', jusqu') et le mot suivant.
 - NE PAS ajouter de <break> sur les virgules (la voix Neural2 gère les pauses naturellement)
 - NE PAS ajouter de <break> après les points (le TTS insère déjà une pause, ajouter une pause = double silence)
 - Point-virgule / deux-points → <break time="150ms"/> UNIQUEMENT si la phrase est longue (>15 mots)
