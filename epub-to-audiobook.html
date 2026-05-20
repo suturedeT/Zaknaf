@@ -1053,30 +1053,30 @@ function sentenceGapMs(text) {
 // fait que Google TTS lit "l ' homme" au lieu de "l'homme" (élision cassée).
 // Post-traitement du SSML : aucun élément (balise, espace) ne doit s'intercaler
 // entre une élision (l', d', n', qu', etc.) et le mot suivant.
-// Regex apostrophes en escapes Unicode (couvre TOUTES les variantes typographiques
-// que Claude pourrait insérer dans son SSML output) :
-//  U+2018 ‘  U+2019 '  U+201A ‚  U+201B ‛  (single-quote variants)
-//  U+02B9 ʹ  U+02BB ʻ  U+02BC ʼ  U+02BD ʽ  U+02C8 ˈ  (modifier letters)
-//  U+0060 `  U+00B4 ´  U+0301 ́   (grave/acute, parfois utilisés à tort)
-const APOS_VARIANTS = /[‘’‚‛ʹʻʼʽˈ`´́]/g;
+// Variantes d'apostrophe à normaliser, en escapes Unicode explicites.
+// On normalise vers l'apostrophe TYPOGRAPHIQUE ' (U+2019) car c'est celle que
+// Google TTS Neural2 reconnaît pour les élisions françaises. Avec l'ASCII '
+// (U+0027), Google peut traiter "L'" comme une contraction anglaise et briser
+// la liaison "L'Éclat" / "l'épier" / etc.
+const APOS_VARIANTS = /['‘‚‛ʹʻʼʽˈ`´́]/g;
+const APOS = '’';  // ' typographique
 
 function fixSSMLElisions(ssml) {
   // 1) NFC : recompose les accents combinants (e + ́ → é précomposé)
   ssml = ssml.normalize('NFC');
-  // 2) Claude retypographie souvent l'ASCII ' en ' (U+2019), ce qui faisait que
-  //    mes regex (qui cherchent l'ASCII) rataient tout. Force ASCII ' (U+0027).
-  ssml = ssml.replace(APOS_VARIANTS, "'");
+  // 2) Toutes les variantes d'apostrophe → ' TYPOGRAPHIQUE (U+2019)
+  ssml = ssml.replace(APOS_VARIANTS, APOS);
   const ELI = 'l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd';
   // Plusieurs passes pour gérer les imbrications (ex: <p><emphasis>l'</emphasis>âme</p>)
   let prev, pass = 0;
   do {
     prev = ssml;
     // 1) espace(s)/tag(s) auto-fermants entre apostrophe et lettre suivante → retire
-    ssml = ssml.replace(new RegExp(`\\b(${ELI})'(?:\\s|<[^>]+/>)+(\\p{L})`, 'giu'), "$1'$2");
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})${APOS}(?:\\s|<[^>]+/>)+(\\p{L})`, 'giu'), `$1${APOS}$2`);
     // 2) balise ouvrante glissée entre élision et mot → on la déplace AVANT l'élision
-    ssml = ssml.replace(new RegExp(`\\b(${ELI})'(<[^/][^>]*[^/]>)(\\p{L})`, 'giu'), "$2$1'$3");
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})${APOS}(<[^/][^>]*[^/]>)(\\p{L})`, 'giu'), `$2$1${APOS}$3`);
     // 3) balise fermante juste après l'apostrophe → on l'envoie après le mot
-    ssml = ssml.replace(new RegExp(`\\b(${ELI})'(</[^>]+>)\\s*(\\p{L}+)`, 'giu'), "$1'$3$2");
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})${APOS}(</[^>]+>)\\s*(\\p{L}+)`, 'giu'), `$1${APOS}$3$2`);
     pass++;
   } while (prev !== ssml && pass < 5);
   return ssml;
@@ -1088,8 +1088,10 @@ function normalizeFrenchText(s) {
     //    sinon \p{L} ne matche que la lettre nue et l'accent reste flottant,
     //    cassant la concaténation "l'é..." vs "l'e ́...".
     .normalize('NFC')
-    // Toutes les variantes d'apostrophe / quote / accent flottant → ' ASCII
-    .replace(/[‘’‚‛ʹʻʼʽ`´́]/g, "'")
+    // Toutes les variantes d'apostrophe → ' TYPOGRAPHIQUE (U+2019).
+    // Google TTS reconnaît mieux les élisions françaises avec ' qu'avec '
+    // (qu'il peut traiter comme une contraction anglaise type "I'm"/"L's").
+    .replace(APOS_VARIANTS, APOS)
     // Espaces insécables et fines → espace normal
     .replace(/[     ]/g, ' ')
     // Caractères invisibles à supprimer (cassent les mots en TTS) :
@@ -1098,7 +1100,7 @@ function normalizeFrenchText(s) {
     //   Plus les zero-width (U+200B/C/D), word-joiner (U+2060), BOM (U+FEFF)
     .replace(/[­​‌‍⁠﻿]/g, '')
     // Resserre les apostrophes d'élision : "l ' homme" / "l' homme" → "l'homme"
-    .replace(/(\p{L})\s*'\s*(\p{L})/gu, "$1'$2");
+    .replace(new RegExp(`(\\p{L})\\s*${APOS}\\s*(\\p{L})`, 'gu'), `$1${APOS}$2`);
 }
 
 function segmentChapter(ch) {
@@ -1141,7 +1143,7 @@ RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
   ✓ CORRECT   : "Il <emphasis>n'aime</emphasis> pas." / "<prosody rate=\"95%\">l'épée brillait</prosody>" / "<emphasis>l'âme</emphasis>" / "qu'à"
   ✗ INTERDIT  : "Il n'<emphasis>aime</emphasis> pas." / "l' épée" / "n' était" / "qu' à" / "l'<emphasis>âme</emphasis>" / "d'<prosody>écrire</prosody>"
   Si une emphase ou prosodie concerne un mot élidé, la balise englobe TOUJOURS l'élision ET le mot complet (avec ses accents) ensemble : <emphasis>l'épée</emphasis>, JAMAIS l'<emphasis>épée</emphasis>.
-- APOSTROPHE : utilise EXCLUSIVEMENT l'apostrophe ASCII droite ' (U+0027) dans tout le SSML. N'utilise JAMAIS l'apostrophe typographique ' (U+2019) ni aucune autre variante.
+- APOSTROPHE : utilise EXCLUSIVEMENT l'apostrophe typographique française ' (U+2019) dans tout le SSML, et JAMAIS l'apostrophe ASCII droite ' (U+0027) ni aucune autre variante. C'est la convention française et celle que Google TTS attend pour reconnaître les élisions.
 - NE PAS ajouter de <break> sur les virgules (la voix Neural2 gère les pauses naturellement)
 - NE PAS ajouter de <break> après les points (le TTS insère déjà une pause, ajouter une pause = double silence)
 - Point-virgule / deux-points → <break time="150ms"/> UNIQUEMENT si la phrase est longue (>15 mots)
