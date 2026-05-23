@@ -1245,9 +1245,27 @@ function sanitizeSSMLForChirp3(ssml) {
 
 function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
 
+// Compteur global pour limiter le nombre de logs SSML (sinon spam console)
+let __ssmlDebugCount = 0;
+const SSML_DEBUG_MAX = 10;
+
 async function googleTTS(ssml, retries = 3) {
   const chirp3 = isChirp3(selectedVoice);
   const inputSSML = chirp3 ? sanitizeSSMLForChirp3(ssml) : ssml;
+
+  // DEBUG : affiche les 10 premières SSML envoyées à Google TTS dans la console,
+  // pour vérifier si la suppression d'apostrophes / élisions fusionnées sont
+  // bien appliquées. Cherche les mots problématiques (lépier, LÉclat, etc.)
+  if (__ssmlDebugCount < SSML_DEBUG_MAX) {
+    __ssmlDebugCount++;
+    const hasApostrophe = /['‘’‚‛ʹʻʼʽˈ`´́]/.test(inputSSML);
+    console.log(
+      `%c[SSML #${__ssmlDebugCount}]${hasApostrophe ? ' ⚠ APOSTROPHE PRÉSENTE' : ' ✓ aucune apostrophe'}`,
+      `color:${hasApostrophe ? '#fca5a5' : '#86efac'};font-weight:bold`
+    );
+    console.log(inputSSML);
+  }
+
   const audioConfig = chirp3
     ? { audioEncoding:'LINEAR16', sampleRateHertz:44100 }
     : { audioEncoding:'LINEAR16', sampleRateHertz:44100, speakingRate:1.04, pitch:0, effectsProfileId:['headphone-class-device'] };
