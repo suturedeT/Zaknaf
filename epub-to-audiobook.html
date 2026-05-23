@@ -1208,14 +1208,22 @@ ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
       headers:{ 'Content-Type':'application/json', 'x-api-key': claudeApiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
       body: JSON.stringify({
         model:'claude-sonnet-4-6',
-        max_tokens:2000,
+        // 2000 était trop bas pour des batches de 8 phrases avec SSML enrichi
+        // (Claude tronquait, le JSON était invalide, on tombait dans le catch
+        //  qui renvoyait le texte brut avec apostrophes — élisions cassées).
+        max_tokens:8000,
         messages:[{role:'user', content:prompt}]
       })
     });
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      throw new Error(`Claude HTTP ${resp.status}: ${errBody.slice(0,200)}`);
+    }
     const data = await resp.json();
     const raw  = data.content?.map(c=>c.text||'').join('') || '';
+    if (!raw) throw new Error(`Empty Claude response: ${JSON.stringify(data).slice(0,200)}`);
     const match = raw.match(/\[[\s\S]*\]/);
-    if (!match) throw new Error('No JSON');
+    if (!match) throw new Error(`No JSON in response: ${raw.slice(0,200)}`);
     const arr = JSON.parse(match[0]);
     return sentences.map((s, i) => {
       const found = arr.find(x => x.i === i);
@@ -1223,8 +1231,11 @@ ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
       return fixSSMLElisions(ssml);
     });
   } catch(e) {
-    console.error('Claude SSML error:', e);
-    return sentences.map(s => `<speak>${escapeXml(s)}</speak>`);
+    console.error('Claude SSML error (fallback avec fixSSMLElisions):', e);
+    // CRITIQUE : même dans le fallback on doit appliquer fixSSMLElisions
+    // pour supprimer les apostrophes, sinon les élisions restent cassées
+    // sur tout le chapitre où Claude a échoué.
+    return sentences.map(s => fixSSMLElisions(`<speak>${escapeXml(s)}</speak>`));
   }
 }
 
