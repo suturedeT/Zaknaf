@@ -1053,12 +1053,24 @@ function sentenceGapMs(text) {
 // fait que Google TTS lit "l ' homme" au lieu de "l'homme" (élision cassée).
 // Post-traitement du SSML : aucun élément (balise, espace) ne doit s'intercaler
 // entre une élision (l', d', n', qu', etc.) et le mot suivant.
-// Variantes d'apostrophe à normaliser, en escapes Unicode explicites.
-// On normalise vers l'apostrophe TYPOGRAPHIQUE ' (U+2019) car c'est celle que
-// Google TTS Neural2 reconnaît pour les élisions françaises. Avec l'ASCII '
-// (U+0027), Google peut traiter "L'" comme une contraction anglaise et briser
-// la liaison "L'Éclat" / "l'épier" / etc.
-const APOS_VARIANTS = /['‘‚‛ʹʻʼʽˈ`´́]/g;
+// Classe de TOUTES les variantes d'apostrophe en escapes Unicode EXPLICITES
+// (zéro ambiguïté d'encodage du fichier source) :
+//   U+0027 '   ASCII apostrophe
+//   U+2018 '   left single quotation mark
+//   U+2019 '   right single quotation mark (typographique français)
+//   U+201A ‚   single low-9 quote
+//   U+201B ‛   single high-reversed-9 quote
+//   U+02B9 ʹ   modifier letter prime
+//   U+02BB ʻ   modifier letter turned comma
+//   U+02BC ʼ   modifier letter apostrophe
+//   U+02BD ʽ   modifier letter reversed comma
+//   U+02C8 ˈ   modifier letter vertical line (stress mark)
+//   U+0060 `   grave accent (parfois utilisé à tort)
+//   U+00B4 ´   acute accent
+//   U+0301  ́   combining acute accent
+const APOS_ALL = /['‘’‚‛ʹʻʼʽˈ`´́]/g;
+// Conservé pour rétro-compatibilité du code existant
+const APOS_VARIANTS = APOS_ALL;
 const APOS = '’';  // ' typographique
 
 function fixSSMLElisions(ssml) {
@@ -1096,6 +1108,15 @@ function fixSSMLElisions(ssml) {
   //    <speak>, <break>, <lang>, <p>, <s> qui sont structurels et neutres.
   ssml = ssml.replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1');
   ssml = ssml.replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1');
+
+  // 6) OPTION NUCLÉAIRE : élimine TOUTE apostrophe résiduelle dans le SSML,
+  //    quelle que soit sa variante (ASCII, typo, modifier letter…). Si une
+  //    apostrophe non-élision a survécu (possessif anglais dans un nom, etc.)
+  //    ou si Claude a glissé un caractère exotique que mon regex de fusion
+  //    n'a pas capté, ce filet de sécurité la supprime du SSML envoyé à
+  //    Google TTS. Claude utilise des " pour les attributs SSML donc rien
+  //    n'est cassé côté XML.
+  ssml = ssml.replace(APOS_ALL, '');
   return ssml;
 }
 
