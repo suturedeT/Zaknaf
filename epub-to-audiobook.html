@@ -1107,31 +1107,24 @@ function fixSSMLElisions(ssml) {
     pass++;
   } while (prev !== ssml && pass < 5);
 
-  // 4) FUSION INLINE DE L'ÉLISION : on supprime carrément l'apostrophe pour
-  //    que Google TTS lise le bloc comme un seul mot.
-  //      "l'épier" → "lépier"   "L'Éclat" → "LÉclat"   "c'était" → "cétait"
-  //    Plus d'apostrophe dans le SSML envoyé = aucune possibilité que Google
-  //    TTS la traite comme un séparateur de mot et casse la liaison.
+  // 4) FUSION INLINE CHIRURGICALE : on supprime l'apostrophe UNIQUEMENT quand
+  //    le mot suivant commence par une VOYELLE ACCENTUÉE. C'est le seul cas
+  //    où Google TTS Neural2 cassait la liaison (l'épier, l'âme, L'Éclat,
+  //    c'était). Pour les voyelles non accentuées (j'en, n'y, qu'a, d'eau),
+  //    Google fait correctement la liaison native — on garde l'apostrophe,
+  //    sinon "j'en" devient "jen" (lu comme un nom propre /ʒɛn/) et "n'y"
+  //    devient "ny" (lu N-Y comme un sigle).
+  const ACCENT_V = 'àáâãäåèéêëìíîïòóôõöùúûüýÿÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝŸ';
   ssml = ssml.replace(
-    new RegExp(`\\b(${ELI})${APOS}(\\p{L}+)`, 'giu'),
+    new RegExp(`\\b(${ELI})${APOS}([${ACCENT_V}]\\p{L}*)`, 'giu'),
     '$1$2'
   );
 
-  // 5) ANTI-RUPTURE : retire TOUS les <emphasis> et <prosody>. Ces balises
-  //    peuvent introduire des micro-pauses au début/fin de leur contenu,
-  //    ce qui suffit à casser une liaison sur Google TTS Neural2. On garde
-  //    <speak>, <break>, <lang>, <p>, <s> qui sont structurels et neutres.
+  // 5) Retire les <emphasis> et <prosody> qui peuvent introduire des
+  //    micro-pauses cassant les liaisons. Le contenu textuel reste.
   ssml = ssml.replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1');
   ssml = ssml.replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1');
 
-  // 6) OPTION NUCLÉAIRE : élimine TOUTE apostrophe résiduelle dans le SSML,
-  //    quelle que soit sa variante (ASCII, typo, modifier letter…). Si une
-  //    apostrophe non-élision a survécu (possessif anglais dans un nom, etc.)
-  //    ou si Claude a glissé un caractère exotique que mon regex de fusion
-  //    n'a pas capté, ce filet de sécurité la supprime du SSML envoyé à
-  //    Google TTS. Claude utilise des " pour les attributs SSML donc rien
-  //    n'est cassé côté XML.
-  ssml = ssml.replace(APOS_ALL, '');
   return ssml;
 }
 
