@@ -901,15 +901,32 @@ function extractChapterTitle(doc, fallbackNum) {
   // PRIORITÉ : si on détecte une page de PARTIE (PREMIÈRE/DEUXIÈME/...), on
   // ignore les autres candidats type "Chapitre N" (qui sont des fragments
   // parasites venant du bas du fichier) et on ne garde que la partie + son
-  // éventuel sous-titre.
-  const partRe = /^\s*(?:(?:première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|onzième|douzième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(?:partie|tome|livre|book|part)|(?:partie|tome|livre|book|part)\s+[IVXLC0-9]+)\s*$/i;
-  const partTitleIdx = all.findIndex(t => partRe.test(t));
-  if (partTitleIdx !== -1) {
-    const partTitle = all[partTitleIdx];
+  // éventuel sous-titre. Regex SANS ancrage de fin pour matcher "PREMIÈRE
+  // PARTIE quelque chose" ou "première partie : intro" etc.
+  const partRe = /\b(première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|onzième|douzième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(partie|tome|livre|book|part)\b/i;
+  const partOrdRe = /\b(partie|tome|livre|book|part)\s+[IVXLC0-9]+\b/i;
+
+  // Recherche aussi dans le TEXTE complet du début du fichier (au cas où la
+  // mention "PARTIE" serait dans un paragraphe long ignoré par les candidats)
+  const headText = (doc.body || doc).textContent.replace(/\s+/g, ' ').trim().slice(0, 500);
+  const partInHead = headText.match(partRe) || headText.match(partOrdRe);
+
+  const partTitleIdx = all.findIndex(t => partRe.test(t) || partOrdRe.test(t));
+  if (partTitleIdx !== -1 || partInHead) {
+    let partTitle;
+    if (partTitleIdx !== -1) {
+      partTitle = all[partTitleIdx];
+    } else {
+      // PARTIE trouvée seulement dans le texte du début, pas dans les candidats
+      // → on l'extrait proprement (jusqu'à la fin du mot après partie/tome/livre)
+      const m = headText.match(/((?:première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|onzième|douzième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(?:partie|tome|livre|book|part)|(?:partie|tome|livre|book|part)\s+[IVXLC0-9]+)/i);
+      partTitle = m ? m[1].toUpperCase().replace(/\s+/g, ' ').trim() : 'PARTIE';
+    }
     // Sous-titre : prochain candidat NON "Chapitre N" qui suit dans le doc
+    const startFrom = partTitleIdx !== -1 ? partTitleIdx + 1 : 0;
     const subtitle = all
-      .slice(partTitleIdx + 1)
-      .find(t => !/^\s*(chapitre|chapter)\s/i.test(t) && t !== partTitle);
+      .slice(startFrom)
+      .find(t => !/^\s*(chapitre|chapter)\s/i.test(t) && !partRe.test(t) && !partOrdRe.test(t) && t !== partTitle);
     return subtitle ? `${partTitle} — ${subtitle}` : partTitle;
   }
 
