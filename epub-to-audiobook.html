@@ -833,39 +833,109 @@ async function parseEpub(zip) {
   const manifest = {};
   odoc.querySelectorAll('manifest item').forEach(it => { manifest[it.getAttribute('id')] = it.getAttribute('href'); });
 
+  // ── Parse la TOC EPUB pour récupérer les titres "officiels" du livre ──────
+  // La TOC est la source la plus fiable pour les noms (PREMIÈRE PARTIE, etc.)
+  // car elle n'est pas affectée par le contenu mal structuré des fichiers.
+  const tocByHref = await parseTocMap(zip, odoc, opfDir, manifest);
+
   const chapters = [];
-  // Certains ePub utilisent des fichiers-séparateurs courts contenant juste
-  // "Chapitre N" (sans corps de texte), avec le sous-titre + contenu dans le
-  // fichier suivant. On accumule ces titres-préfixes pour les fusionner au
-  // prochain vrai chapitre.
   const pendingTitlePrefix = [];
   const TITLE_PAGE_PATTERN = /^\s*(chapitre|chapter|partie|tome|livre|book|part)\s+(\w+|[ivxlc]+|\d+)\s*$/i;
+  const PART_PATTERN = /\b(première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(partie|tome|livre|book|part)\b|\b(partie|tome|livre|book|part)\s+[IVXLC0-9]+\b/i;
 
   for (const id of spineIds) {
     const href = manifest[id]; if (!href) continue;
     const fobj = zip.file(opfDir + href) || zip.file(href); if (!fobj) continue;
     const html  = await fobj.async('string');
     const doc   = new DOMParser().parseFromString(html, 'text/html');
-    const chTitle = extractChapterTitle(doc, chapters.length + 1);
+    let chTitle = extractChapterTitle(doc, chapters.length + 1);
+
+    // PRIORITÉ TOC : si la TOC a une entrée pour ce fichier qui matche le
+    // pattern PARTIE, on l'utilise (override le titre extrait). Ça résout
+    // les "Chapitre 3/12/20" parasites qui correspondent en fait aux pages
+    // de séparation de partie.
+    const tocTitle = tocByHref.get(href) || tocByHref.get(href.split('#')[0]);
+    if (tocTitle && PART_PATTERN.test(tocTitle)) {
+      chTitle = tocTitle;
+    } else if (tocTitle && /^\s*(chapitre|chapter)\s+(\w+|[IVXLC]+|\d+)\s*$/i.test(chTitle.split(' — ')[0])) {
+      // Si le titre extrait est juste "Chapitre N" et la TOC a quelque chose
+      // de plus riche, on préfère la TOC.
+      if (tocTitle.length > chTitle.length && !/^\s*chapitre\s+\d+\s*$/i.test(tocTitle)) {
+        chTitle = tocTitle;
+      }
+    }
+
     const text = extractText(doc.body).trim();
 
     if (text.length > 80) {
-      // Vrai chapitre avec contenu — préfixe avec les titres en attente
       const fullTitle = pendingTitlePrefix.length > 0
         ? [...pendingTitlePrefix, chTitle].join(' — ')
         : chTitle;
       chapters.push({ title: fullTitle, text });
       pendingTitlePrefix.length = 0;
     } else if (text.length > 0 && TITLE_PAGE_PATTERN.test(chTitle.split(' — ')[0])) {
-      // Fichier court ET dont le titre ressemble à "Chapitre N" → c'est une
-      // page de titre de chapitre, on accumule pour le prochain vrai chapitre.
       pendingTitlePrefix.push(chTitle);
     }
-    // Sinon : fichier court mais pas une page de titre de chapitre (peut être
-    // copyright, dédicace, etc.) — on le drop comme avant.
   }
 
   return { title, author, coverUrl, chapters };
+}
+
+// Parse la TOC EPUB (nav.xhtml v3 ou toc.ncx v2) → Map(href → title).
+// Retourne une Map vide si pas de TOC trouvée.
+async function parseTocMap(zip, odoc, opfDir, manifest) {
+  const result = new Map();
+  try {
+    // EPUB 3 : item avec properties="nav" dans le manifest
+    const navItem = [...odoc.querySelectorAll('manifest item')].find(it =>
+      (it.getAttribute('properties') || '').split(/\s+/).includes('nav'));
+    if (navItem) {
+      const navHref = navItem.getAttribute('href');
+      const navFile = zip.file(opfDir + navHref) || zip.file(navHref);
+      if (navFile) {
+        const navHtml = await navFile.async('string');
+        const navDoc = new DOMParser().parseFromString(navHtml, 'text/html');
+        const navEl = navDoc.querySelector('nav[*|type="toc"], nav') || navDoc.body;
+        // Parcourt récursivement tous les <a href> pour récupérer (href, label).
+        // Aussi : items SANS href mais avec texte (genre <span>) si parent
+        // a des enfants → ce sont des entrées structurelles type PARTIE.
+        const navDir = navHref.includes('/') ? navHref.substring(0, navHref.lastIndexOf('/') + 1) : '';
+        navEl.querySelectorAll('a[href], span').forEach(el => {
+          const text = el.textContent.replace(/\s+/g, ' ').trim();
+          if (!text) return;
+          const href = el.getAttribute('href');
+          if (href) {
+            const resolved = (navDir + href.split('#')[0]).replace(/^\.\//, '');
+            if (!result.has(resolved)) result.set(resolved, text);
+          }
+        });
+      }
+    }
+    // EPUB 2 : toc.ncx (fallback)
+    if (result.size === 0) {
+      const spineEl = odoc.querySelector('spine');
+      const ncxId = spineEl?.getAttribute('toc');
+      if (ncxId && manifest[ncxId]) {
+        const ncxFile = zip.file(opfDir + manifest[ncxId]) || zip.file(manifest[ncxId]);
+        if (ncxFile) {
+          const ncxXml = await ncxFile.async('string');
+          const ncxDoc = new DOMParser().parseFromString(ncxXml, 'application/xml');
+          const ncxDir = manifest[ncxId].includes('/') ? manifest[ncxId].substring(0, manifest[ncxId].lastIndexOf('/') + 1) : '';
+          ncxDoc.querySelectorAll('navPoint').forEach(np => {
+            const text = np.querySelector('navLabel text')?.textContent?.replace(/\s+/g, ' ').trim();
+            const src = np.querySelector('content')?.getAttribute('src');
+            if (text && src) {
+              const resolved = (ncxDir + src.split('#')[0]).replace(/^\.\//, '');
+              if (!result.has(resolved)) result.set(resolved, text);
+            }
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('TOC parsing failed:', e);
+  }
+  return result;
 }
 
 // Extrait un titre de chapitre lisible. Combine headings + scan body, avec
