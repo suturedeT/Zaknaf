@@ -837,6 +837,12 @@ async function parseEpub(zip) {
   // La TOC est la source la plus fiable pour les noms (PREMIÈRE PARTIE, etc.)
   // car elle n'est pas affectée par le contenu mal structuré des fichiers.
   const tocByHref = await parseTocMap(zip, odoc, opfDir, manifest);
+  console.log('%c[ePub TOC] Contenu de la TOC :', 'color:#c084fc;font-weight:bold');
+  if (tocByHref.size === 0) {
+    console.warn('⚠ AUCUNE entrée TOC trouvée — vérifie le fichier ePub');
+  } else {
+    tocByHref.forEach((title, href) => console.log(`  ${href} → "${title}"`));
+  }
 
   const chapters = [];
   const pendingTitlePrefix = [];
@@ -849,21 +855,22 @@ async function parseEpub(zip) {
     const html  = await fobj.async('string');
     const doc   = new DOMParser().parseFromString(html, 'text/html');
     let chTitle = extractChapterTitle(doc, chapters.length + 1);
+    const originalTitle = chTitle;
 
     // PRIORITÉ TOC : si la TOC a une entrée pour ce fichier qui matche le
     // pattern PARTIE, on l'utilise (override le titre extrait). Ça résout
     // les "Chapitre 3/12/20" parasites qui correspondent en fait aux pages
     // de séparation de partie.
     const tocTitle = tocByHref.get(href) || tocByHref.get(href.split('#')[0]);
+    let overrideReason = null;
     if (tocTitle && PART_PATTERN.test(tocTitle)) {
-      chTitle = tocTitle;
+      chTitle = tocTitle; overrideReason = 'TOC=PARTIE';
     } else if (tocTitle && /^\s*(chapitre|chapter)\s+(\w+|[IVXLC]+|\d+)\s*$/i.test(chTitle.split(' — ')[0])) {
-      // Si le titre extrait est juste "Chapitre N" et la TOC a quelque chose
-      // de plus riche, on préfère la TOC.
       if (tocTitle.length > chTitle.length && !/^\s*chapitre\s+\d+\s*$/i.test(tocTitle)) {
-        chTitle = tocTitle;
+        chTitle = tocTitle; overrideReason = 'TOC plus riche';
       }
     }
+    console.log(`[Chapitre] href="${href}" | extraction="${originalTitle}" | TOC="${tocTitle||'∅'}" | final="${chTitle}"${overrideReason?' ['+overrideReason+']':''}`);
 
     const text = extractText(doc.body).trim();
 
