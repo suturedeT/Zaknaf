@@ -845,11 +845,21 @@ async function parseEpub(zip) {
   }
 
   const chapters = [];
-  const pendingTitlePrefix = [];
-  const TITLE_PAGE_PATTERN = /^\s*(chapitre|chapter|partie|tome|livre|book|part)\s+(\w+|[ivxlc]+|\d+)\s*$/i;
   const PART_PATTERN = /\b(première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(partie|tome|livre|book|part)\b|\b(partie|tome|livre|book|part)\s+[IVXLC0-9]+\b/i;
 
-  for (const id of spineIds) {
+  // Détermine où commence la zone "TOC" dans le spine : tout ce qui précède
+  // est traité comme frontmatter (TOME, copyright), tout ce qui est dans
+  // l'intervalle TOC mais HORS TOC est considéré comme filler parasite.
+  const tocHrefs = new Set();
+  tocByHref.forEach((_, h) => tocHrefs.add(h));
+  let firstTocSpineIdx = -1;
+  for (let i = 0; i < spineIds.length; i++) {
+    const h = manifest[spineIds[i]];
+    if (h && (tocHrefs.has(h) || tocHrefs.has(h.split('#')[0]))) { firstTocSpineIdx = i; break; }
+  }
+
+  for (let i = 0; i < spineIds.length; i++) {
+    const id = spineIds[i];
     const href = manifest[id]; if (!href) continue;
     const fobj = zip.file(opfDir + href) || zip.file(href); if (!fobj) continue;
     const html  = await fobj.async('string');
@@ -857,32 +867,38 @@ async function parseEpub(zip) {
     let chTitle = extractChapterTitle(doc, chapters.length + 1);
     const originalTitle = chTitle;
 
-    // PRIORITÉ TOC : si la TOC a une entrée pour ce fichier qui matche le
-    // pattern PARTIE, on l'utilise (override le titre extrait). Ça résout
-    // les "Chapitre 3/12/20" parasites qui correspondent en fait aux pages
-    // de séparation de partie.
     const tocTitle = tocByHref.get(href) || tocByHref.get(href.split('#')[0]);
+    const inToc = !!tocTitle;
+    const isFrontmatter = firstTocSpineIdx === -1 || i < firstTocSpineIdx;
+
+    // Override du titre via TOC si pertinent
     let overrideReason = null;
-    if (tocTitle && PART_PATTERN.test(tocTitle)) {
+    if (inToc && PART_PATTERN.test(tocTitle)) {
       chTitle = tocTitle; overrideReason = 'TOC=PARTIE';
-    } else if (tocTitle && /^\s*(chapitre|chapter)\s+(\w+|[IVXLC]+|\d+)\s*$/i.test(chTitle.split(' — ')[0])) {
+    } else if (inToc && /^\s*(chapitre|chapter)\s+(\w+|[IVXLC]+|\d+)\s*$/i.test(chTitle.split(' — ')[0])) {
       if (tocTitle.length > chTitle.length && !/^\s*chapitre\s+\d+\s*$/i.test(tocTitle)) {
         chTitle = tocTitle; overrideReason = 'TOC plus riche';
       }
     }
-    console.log(`[Chapitre] href="${href}" | extraction="${originalTitle}" | TOC="${tocTitle||'∅'}" | final="${chTitle}"${overrideReason?' ['+overrideReason+']':''}`);
 
     const text = extractText(doc.body).trim();
 
-    if (text.length > 80) {
-      const fullTitle = pendingTitlePrefix.length > 0
-        ? [...pendingTitlePrefix, chTitle].join(' — ')
-        : chTitle;
-      chapters.push({ title: fullTitle, text });
-      pendingTitlePrefix.length = 0;
-    } else if (text.length > 0 && TITLE_PAGE_PATTERN.test(chTitle.split(' — ')[0])) {
-      pendingTitlePrefix.push(chTitle);
+    // Logique de filtrage :
+    //  - Frontmatter (avant la zone TOC) : keep si text > 80 (comportement
+    //    historique pour TOME I etc.)
+    //  - Dans la zone TOC ET référencé par la TOC : keep TOUJOURS (la TOC est
+    //    l'autorité, on accepte les pages PARTIE même très courtes)
+    //  - Dans la zone TOC mais HORS TOC : DROP (fichiers fillers parasites)
+    let kept = false, dropReason = null;
+    if (isFrontmatter) {
+      if (text.length > 80) { chapters.push({ title: chTitle, text }); kept = true; }
+      else dropReason = 'frontmatter trop court';
+    } else if (inToc) {
+      chapters.push({ title: chTitle, text }); kept = true;
+    } else {
+      dropReason = 'hors TOC (filler parasite)';
     }
+    console.log(`[Chapitre] href="${href}" | extr="${originalTitle}" | TOC="${tocTitle||'∅'}" | final="${chTitle}" | ${kept?'KEEP':'DROP ('+dropReason+')'}${overrideReason?' ['+overrideReason+']':''}`);
   }
 
   return { title, author, coverUrl, chapters };
