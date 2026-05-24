@@ -868,12 +868,9 @@ async function parseEpub(zip) {
   return { title, author, coverUrl, chapters };
 }
 
-// Extrait un titre de chapitre lisible. On COMBINE deux sources :
-//   1. Tous les headings h1-h6 (standard)
-//   2. Les premiers éléments du body qui RESSEMBLENT à un titre (couvre les
-//      sous-titres en majuscules placés dans un <p> avant le corps du texte)
-// Puis on déduplique en gardant le plus long de chaque groupe de titres
-// redondants.
+// Extrait un titre de chapitre lisible. Combine headings + scan body, avec
+// PRIORITÉ aux pages de partie ("PREMIÈRE PARTIE", etc.) qui sont des
+// séparateurs structurels du livre.
 function extractChapterTitle(doc, fallbackNum) {
   // Source 1 : headings standards (jusqu'à 4)
   const fromHeadings = [...doc.querySelectorAll('h1, h2, h3, h4, h5, h6')]
@@ -881,31 +878,42 @@ function extractChapterTitle(doc, fallbackNum) {
     .map(h => h.textContent.replace(/\s+/g, ' ').trim());
 
   // Source 2 : premiers éléments body qui ressemblent à un titre
-  //   - texte court (<120 chars)
-  //   - tout majuscules / mot-clé chapitre / chiffres romains / nombre seul
-  //   - on s'arrête au premier paragraphe long (= début du corps du chapitre)
   const fromBody = [];
   const blocks = [...(doc.body || doc).querySelectorAll('p, div, span, header')].slice(0, 30);
   for (const el of blocks) {
-    if (el.querySelector('p, div')) continue; // évite les wrappers
+    if (el.querySelector('p, div')) continue;
     const t = el.textContent.replace(/\s+/g, ' ').trim();
     if (t.length === 0) continue;
-    if (t.length > 120) break; // début du corps du chapitre
+    if (t.length > 120) break;
     const looksLikeTitle =
       /^[A-ZÉÈÊÀÂÔÛÎÇŸÆŒ0-9\s'’.\-:!?—,]+$/.test(t) ||
       /^\s*(chapitre|chapter|prologue|épilogue|epilogue|avant[- ]propos|préface|preface|partie|livre|book|part)/i.test(t) ||
       /^\s*[IVXLCDM]+\s*$/i.test(t) ||
       /^\s*\d+\s*$/.test(t);
     if (looksLikeTitle) fromBody.push(t);
-    if (fromBody.length >= 3) break;
+    if (fromBody.length >= 4) break;
   }
 
-  // Fusion + nettoyage des deux sources
   const all = [...fromHeadings, ...fromBody]
     .map(t => t.replace(/\s+/g, ' ').trim())
     .filter(t => t.length > 0 && t.length < 200);
 
-  // Déduplique : si deux titres se contiennent l'un l'autre, garde le plus long
+  // PRIORITÉ : si on détecte une page de PARTIE (PREMIÈRE/DEUXIÈME/...), on
+  // ignore les autres candidats type "Chapitre N" (qui sont des fragments
+  // parasites venant du bas du fichier) et on ne garde que la partie + son
+  // éventuel sous-titre.
+  const partRe = /^\s*(?:(?:première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|onzième|douzième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(?:partie|tome|livre|book|part)|(?:partie|tome|livre|book|part)\s+[IVXLC0-9]+)\s*$/i;
+  const partTitleIdx = all.findIndex(t => partRe.test(t));
+  if (partTitleIdx !== -1) {
+    const partTitle = all[partTitleIdx];
+    // Sous-titre : prochain candidat NON "Chapitre N" qui suit dans le doc
+    const subtitle = all
+      .slice(partTitleIdx + 1)
+      .find(t => !/^\s*(chapitre|chapter)\s/i.test(t) && t !== partTitle);
+    return subtitle ? `${partTitle} — ${subtitle}` : partTitle;
+  }
+
+  // Sinon : dédup classique en gardant le plus long
   const unique = [];
   for (const t of all) {
     const dupIdx = unique.findIndex(u => u === t || u.includes(t) || t.includes(u));
