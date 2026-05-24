@@ -914,9 +914,6 @@ async function startConversion() {
   const totalChapters = selectedChapters.length;
   const allMp3Parts = []; // accumule les chunks MP3 encodés
   let totalSentences = 0, totalSamples = 0;
-  // Tracking des chapitres pour la piste de chapitres M4B
-  const chapterMarks = [];
-  let elapsedMs = 0;
 
   // ── Boucle principale : chapitre par chapitre ─────────────────────────────
   for (let ci = 0; ci < totalChapters; ci++) {
@@ -994,7 +991,6 @@ async function startConversion() {
 
     const enc = new lamejs.Mp3Encoder(1, SR, 128);
     const FRAME = 1152;
-    const chapterStartMs = Math.round(elapsedMs);
 
     function encodeSilence(ms) {
       const silI16 = new Int16Array(Math.floor(SR * ms / 1000));
@@ -1002,13 +998,11 @@ async function startConversion() {
         const buf = enc.encodeBuffer(silI16.subarray(i, Math.min(i+FRAME, silI16.length)));
         if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
       }
-      elapsedMs += ms;
     }
 
     for (const seg of chPcmSegs) {
       const i16 = float32ToInt16(seg.pcm);
       totalSamples += i16.length;
-      elapsedMs += (i16.length / SR) * 1000;
       for (let i = 0; i < i16.length; i += FRAME) {
         const buf = enc.encodeBuffer(i16.subarray(i, Math.min(i+FRAME, i16.length)));
         if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
@@ -1023,40 +1017,25 @@ async function startConversion() {
     if (flushed.length > 0) allMp3Parts.push(new Uint8Array(flushed));
     chPcmSegs.length = 0; // libère PCM
 
-    chapterMarks.push({
-      title: ch.title || `Chapitre ${ci+1}`,
-      startMs: chapterStartMs,
-      endMs: Math.round(elapsedMs),
-    });
-
     setPhaseBar(3,100); setPhase(3,'done');
     updateGlobal((ci+1)/totalChapters * 0.97, `Ch.${ci+1}/${totalChapters} encodé`);
     log(`✓ Ch.${ci+1} MP3 encodé`,'ok');
     await sleep(0);
   }
 
-  // ── Finalisation M4B (livre audio avec chapitres navigables) ─────────────
-  updateGlobal(0.99,'Finalisation M4B…');
-  // Concatène tous les chunks MP3 en un seul buffer pour parsing/muxing
-  let mp3TotalLen = 0;
-  allMp3Parts.forEach(p => mp3TotalLen += p.length);
-  const mp3Bytes = new Uint8Array(mp3TotalLen);
-  let mp3Off = 0;
-  allMp3Parts.forEach(p => { mp3Bytes.set(p, mp3Off); mp3Off += p.length; });
-  allMp3Parts.length = 0; // libère la mémoire des chunks
-
-  log(`📦 Construction M4B (${chapterMarks.length} chapitres)…`,'hi');
-  const m4bBytes = buildM4B(mp3Bytes, chapterMarks, bookMeta.title, bookMeta.author, SR);
-  const m4bBlob  = new Blob([m4bBytes], { type:'audio/mp4' });
-  const url      = URL.createObjectURL(m4bBlob);
-  const sizeMB   = (m4bBlob.size/1024/1024).toFixed(1);
-  const durMin   = Math.round(elapsedMs/60000);
+  // ── Finalisation MP3 ──────────────────────────────────────────────────────
+  updateGlobal(0.99,'Finalisation…');
+  const id3Parts = buildID3v2(bookMeta.title, bookMeta.author);
+  const mp3Blob = new Blob([...id3Parts, ...allMp3Parts], { type:'audio/mpeg' });
+  const url = URL.createObjectURL(mp3Blob);
+  const sizeMB = (mp3Blob.size/1024/1024).toFixed(1);
+  const durMin = Math.round(totalSamples/SR/60);
 
   updateGlobal(1,'Terminé !');
-  log(`✓ M4B prêt — ${sizeMB} Mo (~${durMin} min) — ${chapterMarks.length} chapitres`,'ok');
+  log(`✓ MP3 prêt — ${sizeMB} Mo (~${durMin} min)`,'ok');
 
   document.getElementById('abortBtn').style.display = 'none';
-  showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'m4b' }], bookMeta.title, totalSentences);
+  showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'mp3' }], bookMeta.title, totalSentences);
 }
 
 function sentenceGapMs(text) {
@@ -1383,251 +1362,6 @@ function buildID3v2(title, author) {
   const tagSize = syncsafe32(total);
   hdr[6]=tagSize[0]; hdr[7]=tagSize[1]; hdr[8]=tagSize[2]; hdr[9]=tagSize[3];
   return [hdr, ...frames];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// M4B BUILDER — wrap MP3 audio + chapters dans un container MP4/M4B
-// Compatible Apple Books iOS (piste de chapitres QuickTime navigable)
-// ─────────────────────────────────────────────────────────────────────────────
-function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  const te = new TextEncoder();
-  const u16 = v => { const a = new Uint8Array(2); a[0]=(v>>8)&0xFF; a[1]=v&0xFF; return a; };
-  const u32 = v => { const a = new Uint8Array(4); a[0]=(v>>>24)&0xFF; a[1]=(v>>>16)&0xFF; a[2]=(v>>>8)&0xFF; a[3]=v&0xFF; return a; };
-  const u8a = (...nums) => new Uint8Array(nums);
-  const cat = (...arrs) => {
-    let n = 0; for (const a of arrs) n += a.length;
-    const out = new Uint8Array(n);
-    let off = 0; for (const a of arrs) { out.set(a, off); off += a.length; }
-    return out;
-  };
-  const atom = (type, ...children) => {
-    let n = 8; for (const c of children) n += c.length;
-    const out = new Uint8Array(n);
-    out[0]=(n>>>24)&0xFF; out[1]=(n>>>16)&0xFF; out[2]=(n>>>8)&0xFF; out[3]=n&0xFF;
-    for (let i=0; i<4; i++) out[4+i] = type.charCodeAt(i);
-    let off = 8;
-    for (const c of children) { out.set(c, off); off += c.length; }
-    return out;
-  };
-
-  // ── Parse MP3 frames (offset + size) ───────────────────────────────────────
-  const frames = [];
-  {
-    const BR  = [0,32,40,48,56,64,80,96,112,128,160,192,224,256,320];
-    const SR  = [44100,48000,32000];
-    let off = 0;
-    while (off < mp3Bytes.length - 4) {
-      if (mp3Bytes[off]===0xFF && (mp3Bytes[off+1]&0xE0)===0xE0) {
-        const b1=mp3Bytes[off+1], b2=mp3Bytes[off+2];
-        const ver=(b1>>3)&0x3, lyr=(b1>>1)&0x3;
-        const brI=(b2>>4)&0xF, srI=(b2>>2)&0x3, pad=(b2>>1)&0x1;
-        if (ver===3 && lyr===1 && brI>0 && brI<15 && srI<3) {
-          const sz = ((144*BR[brI]*1000)/SR[srI] |0) + pad;
-          if (off + sz <= mp3Bytes.length) {
-            frames.push({ offset: off, size: sz });
-            off += sz;
-            continue;
-          }
-        }
-      }
-      off++;
-    }
-  }
-  if (frames.length === 0) throw new Error('Aucune trame MP3 valide trouvée');
-
-  // ── Échantillons texte des chapitres (format QuickTime) ────────────────────
-  //   2 octets big-endian (taille du texte) + texte UTF-8
-  const chapterSamples = chapters.map(ch => {
-    const t = te.encode(ch.title || 'Chapitre');
-    return cat(u16(t.length), t);
-  });
-
-  // ── Constantes timescales et IDs ──────────────────────────────────────────
-  const MOVIE_TS = 1000;
-  const AUDIO_TS = sampleRate;
-  const CHAPTER_TS = 1000;
-  const FRAME_SAMPLES = 1152; // MPEG-1 Layer 3
-  const totalMs = chapters.length ? chapters[chapters.length-1].endMs : 0;
-  const audioMediaDuration = frames.length * FRAME_SAMPLES;
-  const AUDIO_TID = 1, CHAPTER_TID = 2;
-  const TS_BASE = u8a(0,0,0,0); // version (0) + flags (0,0,0)
-  const MATRIX = cat(u32(0x10000),u32(0),u32(0), u32(0),u32(0x10000),u32(0), u32(0),u32(0),u32(0x40000000));
-
-  // ── ftyp ──────────────────────────────────────────────────────────────────
-  const ftyp = atom('ftyp',
-    te.encode('M4B '), u32(0x200),
-    te.encode('M4B '), te.encode('mp42'), te.encode('isom')
-  );
-
-  // ── mvhd ──────────────────────────────────────────────────────────────────
-  const mvhd = atom('mvhd',
-    TS_BASE, u32(0), u32(0), u32(MOVIE_TS), u32(totalMs),
-    u32(0x10000), u16(0x0100), u16(0), u32(0), u32(0),
-    MATRIX,
-    u32(0),u32(0),u32(0),u32(0),u32(0),u32(0),  // pre_defined[6]
-    u32(3)  // next track ID
-  );
-
-  // ── esds (descripteur ES pour MP3 dans MP4) ────────────────────────────────
-  // ObjectTypeIndication = 0x6B (MPEG-1 Audio Layer 3)
-  const esds = atom('esds',
-    TS_BASE,
-    u8a(0x03, 0x80,0x80,0x80, 0x19),   // ES_Descriptor, len=25
-    u16(1), u8a(0),                      // ES_ID + flags
-    u8a(0x04, 0x80,0x80,0x80, 0x11),   // DecoderConfigDescriptor, len=17
-    u8a(0x6B, 0x15, 0,0,0),              // objType + streamType<<2|1 + bufferSizeDB
-    u32(128000), u32(128000),             // maxBitrate, avgBitrate
-    u8a(0x05, 0x80,0x80,0x80, 0x00),   // DecoderSpecificInfo, len=0 (MP3 n'en a pas)
-    u8a(0x06, 0x80,0x80,0x80, 0x01),   // SLConfigDescriptor, len=1
-    u8a(0x02)
-  );
-
-  // ── Sample entry audio (mp4a) ──────────────────────────────────────────────
-  const mp4a = atom('mp4a',
-    u8a(0,0,0,0,0,0), u16(1),            // reserved + data ref index
-    u32(0), u32(0),                       // reserved
-    u16(1), u16(16),                      // channelCount=1 (mono), sampleSize=16
-    u16(0), u16(0),                       // pre_defined + reserved
-    u32(AUDIO_TS << 16),                  // sampleRate (16.16 fixed point)
-    esds
-  );
-
-  // ── Sample entry chapter text (text format QuickTime) ──────────────────────
-  const textSampleEntry = atom('text',
-    u8a(0,0,0,0,0,0), u16(1),            // reserved + data ref index
-    u32(1), u32(0xFFFFFFFF), u32(0),     // display flags + text justification + bg color (24 bits)
-    u8a(0),                                // bg color last byte
-    u32(0), u32(0),                       // default text box (top, left)
-    u32(0), u32(0),                       // (bottom, right)
-    u32(0), u32(0),                       // reserved
-    u16(0), u16(0),                       // fontNumber, fontFace
-    u8a(0),                                // reserved
-    u16(0),                               // reserved
-    u32(0), u32(0x0000FF00),             // foreground color (white)
-    u8a(0)                                 // textName (empty)
-  );
-
-  // ── Tables de samples (closure pour reconstruction) ────────────────────────
-  const audioFrameSizes = frames.map(f => f.size);
-  const chapterSampleSizes = chapterSamples.map(s => s.length);
-  const audioTotalSize = audioFrameSizes.reduce((a,b)=>a+b, 0);
-
-  // Construit l'arbre moov ; reçoit les offsets absolus dans le fichier final.
-  function buildMoov(audioStartOffset, chapterOffsets) {
-    // ── Audio trak ─────────────────────────────────────────────────────────
-    const audio_tkhd = atom('tkhd',
-      u8a(0,0,0,7),  // flags: track_enabled|in_movie|in_preview
-      u32(0), u32(0), u32(AUDIO_TID), u32(0), u32(totalMs),
-      u32(0), u32(0), u16(0), u16(0), u16(0x0100), u16(0),
-      MATRIX, u32(0), u32(0)
-    );
-    const audio_tref = atom('tref', atom('chap', u32(CHAPTER_TID)));
-    const audio_mdhd = atom('mdhd', TS_BASE, u32(0), u32(0), u32(AUDIO_TS), u32(audioMediaDuration), u16(0x55C4), u16(0));
-    const audio_hdlr = atom('hdlr', TS_BASE, u32(0), te.encode('soun'), u32(0), u32(0), u32(0), u8a(0));
-    const audio_smhd = atom('smhd', TS_BASE, u16(0), u16(0));
-    const audio_dref = atom('dref', TS_BASE, u32(1), atom('url ', u8a(0,0,0,1)));
-    const audio_dinf = atom('dinf', audio_dref);
-    const audio_stsd = atom('stsd', TS_BASE, u32(1), mp4a);
-    const audio_stts = atom('stts', TS_BASE, u32(1), u32(frames.length), u32(FRAME_SAMPLES));
-    const audio_stsc = atom('stsc', TS_BASE, u32(1), u32(1), u32(frames.length), u32(1));
-    // stsz : version+flags + sample_size=0 + count + sizes[]
-    const stszParts = [TS_BASE, u32(0), u32(frames.length)];
-    audioFrameSizes.forEach(sz => stszParts.push(u32(sz)));
-    const audio_stsz = atom('stsz', ...stszParts);
-    const audio_stco = atom('stco', TS_BASE, u32(1), u32(audioStartOffset));
-    const audio_stbl = atom('stbl', audio_stsd, audio_stts, audio_stsc, audio_stsz, audio_stco);
-    const audio_minf = atom('minf', audio_smhd, audio_dinf, audio_stbl);
-    const audio_mdia = atom('mdia', audio_mdhd, audio_hdlr, audio_minf);
-    const audio_trak = atom('trak', audio_tkhd, audio_tref, audio_mdia);
-
-    // ── Chapter text trak ──────────────────────────────────────────────────
-    const chap_tkhd = atom('tkhd',
-      u8a(0,0,0,1),  // flags: track_enabled (mais pas in_movie, c'est une piste auxiliaire)
-      u32(0), u32(0), u32(CHAPTER_TID), u32(0), u32(totalMs),
-      u32(0), u32(0), u16(0), u16(0), u16(0), u16(0),
-      MATRIX, u32(0), u32(0)
-    );
-    const chap_mdhd = atom('mdhd', TS_BASE, u32(0), u32(0), u32(CHAPTER_TS), u32(totalMs), u16(0x55C4), u16(0));
-    const chap_hdlr = atom('hdlr', TS_BASE, u32(0), te.encode('text'), u32(0), u32(0), u32(0), u8a(0));
-    // gmhd (generic media header) pour piste texte
-    const chap_gmin = atom('gmin', TS_BASE, u16(0x40), u16(0x8000), u16(0x8000), u16(0x8000), u16(0), u16(0));
-    const chap_gmhd = atom('gmhd', chap_gmin);
-    const chap_dref = atom('dref', TS_BASE, u32(1), atom('url ', u8a(0,0,0,1)));
-    const chap_dinf = atom('dinf', chap_dref);
-    const chap_stsd = atom('stsd', TS_BASE, u32(1), textSampleEntry);
-    // stts : durée de chaque chapitre dans CHAPTER_TS (1000 = ms)
-    const sttsParts = [TS_BASE, u32(chapters.length)];
-    chapters.forEach(ch => { sttsParts.push(u32(1)); sttsParts.push(u32(ch.endMs - ch.startMs)); });
-    const chap_stts = atom('stts', ...sttsParts);
-    const chap_stsc = atom('stsc', TS_BASE, u32(1), u32(1), u32(1), u32(1));
-    const cStszParts = [TS_BASE, u32(0), u32(chapters.length)];
-    chapterSampleSizes.forEach(sz => cStszParts.push(u32(sz)));
-    const chap_stsz = atom('stsz', ...cStszParts);
-    const cStcoParts = [TS_BASE, u32(chapters.length)];
-    chapterOffsets.forEach(off => cStcoParts.push(u32(off)));
-    const chap_stco = atom('stco', ...cStcoParts);
-    const chap_stbl = atom('stbl', chap_stsd, chap_stts, chap_stsc, chap_stsz, chap_stco);
-    const chap_minf = atom('minf', chap_gmhd, chap_dinf, chap_stbl);
-    const chap_mdia = atom('mdia', chap_mdhd, chap_hdlr, chap_minf);
-    const chap_trak = atom('trak', chap_tkhd, chap_mdia);
-
-    // ── udta avec métadonnées iTunes-style (ilst) ──────────────────────────
-    function ilstString(key, val) {
-      const data = atom('data', u8a(0,0,0,1), u8a(0,0,0,0), te.encode(val));
-      return atom(key, data);
-    }
-    function ilstU8(key, val) {
-      const data = atom('data', u8a(0,0,0,21), u8a(0,0,0,0), u8a(val));
-      return atom(key, data);
-    }
-    const ilst = atom('ilst',
-      ilstString('\xA9nam', title || 'Audiobook'),       // titre
-      ilstString('\xA9ART', author || 'Auteur inconnu'), // artiste
-      ilstString('\xA9alb', title || 'Audiobook'),       // album
-      ilstString('\xA9gen', 'Audiobook'),                // genre
-      ilstU8('stik', 2)                                   // media type 2 = Audiobook
-    );
-    const hdlr_meta = atom('hdlr', TS_BASE, u32(0), te.encode('mdir'), te.encode('appl'), u32(0), u32(0), u8a(0));
-    const meta = atom('meta', TS_BASE, hdlr_meta, ilst);
-    const udta = atom('udta', meta);
-
-    return atom('moov', mvhd, audio_trak, chap_trak, udta);
-  }
-
-  // ── Two-pass : 1) construit moov avec offsets placeholder pour calculer
-  //              sa taille,  2) reconstruit avec les vrais offsets.
-  const moovPlaceholder = buildMoov(0, new Array(chapters.length).fill(0));
-  const moovSize = moovPlaceholder.length;
-  const mdatHeaderSize = 8;
-  const mdatPayloadStart = ftyp.length + moovSize + mdatHeaderSize;
-  const audioStart = mdatPayloadStart;
-  const chapterOffsets = [];
-  let cursor = audioStart + audioTotalSize;
-  for (const cs of chapterSamples) {
-    chapterOffsets.push(cursor);
-    cursor += cs.length;
-  }
-  const moov = buildMoov(audioStart, chapterOffsets);
-  if (moov.length !== moovSize) throw new Error('Internal: moov size mismatch ' + moov.length + ' vs ' + moovSize);
-
-  // ── mdat ──────────────────────────────────────────────────────────────────
-  const mdatSize = mdatHeaderSize + audioTotalSize + chapterSamples.reduce((a,b)=>a+b.length, 0);
-  const mdatHeader = cat(u32(mdatSize), te.encode('mdat'));
-
-  // ── Concatène ftyp + moov + mdat(header + audio + chapter samples) ────────
-  // Pour l'audio, on copie uniquement les octets de chaque trame parsée
-  // (saute les éventuels octets indésirables type ID3, Xing, etc.)
-  const audioPayload = new Uint8Array(audioTotalSize);
-  {
-    let off = 0;
-    for (const f of frames) {
-      audioPayload.set(mp3Bytes.subarray(f.offset, f.offset + f.size), off);
-      off += f.size;
-    }
-  }
-
-  return cat(ftyp, moov, mdatHeader, audioPayload, ...chapterSamples);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
