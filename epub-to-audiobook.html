@@ -936,7 +936,9 @@ async function startConversion() {
     codec: 'mp4a.40.2',     // AAC-LC
     sampleRate: SR,
     numberOfChannels: 1,
-    bitrate: 64000,         // 64 kbps suffit largement pour de la narration mono
+    // WebCodecs n'accepte que 96000/128000/160000/192000 pour AAC-LC mono.
+    // 96000 est largement suffisant pour de la narration mono.
+    bitrate: 96000,
     bitrateMode: 'constant'
   });
   let audioTimestampUs = 0; // timestamp en µs pour AudioData
@@ -1499,7 +1501,7 @@ function buildM4B(aacFrames, chapters, title, author, sampleRate) {
     u16(1), u8a(0),                      // ES_ID + flags
     u8a(0x04, 0x80,0x80,0x80, 0x14),   // DecoderConfigDescriptor, len=20
     u8a(0x40, 0x15, 0,0,0),              // objType=0x40 (MPEG-4 Audio) + streamType<<2|1 + bufSize
-    u32(64000), u32(64000),               // maxBitrate, avgBitrate
+    u32(96000), u32(96000),               // maxBitrate, avgBitrate (doit matcher l'encodeur)
     u8a(0x05, 0x80,0x80,0x80, 0x02),   // DecoderSpecificInfo, len=2
     asc,                                  // AudioSpecificConfig
     u8a(0x06, 0x80,0x80,0x80, 0x01),   // SLConfigDescriptor, len=1
