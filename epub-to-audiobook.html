@@ -884,23 +884,73 @@ function showBookPreview(book) {
   document.getElementById('statWords').textContent    = totalWords.toLocaleString('fr');
   document.getElementById('statDuration').textContent = estMin;
 
-  const list = document.getElementById('chapterList');
-  list.innerHTML = '';
-  book.chapters.forEach((ch, i) => {
-    const wc = ch.text.split(/\s+/).length;
-    const el = document.createElement('div');
-    el.className = 'ch-item';
-    el.innerHTML = `
-      <input type="checkbox" id="ch${i}" checked>
-      <label for="ch${i}" class="ch-item-name">${ch.title}</label>
-      <span class="ch-item-words">${wc.toLocaleString('fr')} mots</span>`;
-    list.appendChild(el);
-  });
+  renderChapterList();
 
   const prev = document.getElementById('bookPreview');
   prev.style.display = 'flex'; prev.classList.add('fade-in');
   const btn = document.getElementById('convertBtn');
   btn.style.display = 'block'; btn.classList.add('fade-in');
+}
+
+// Rendu de la liste des chapitres : flèches ↑↓ pour réordonner, titre éditable
+// au clic, case à cocher pour exclure. Conserve l'état des cases entre les
+// re-rendus en lisant l'état actuel du DOM avant de tout reconstruire.
+function renderChapterList() {
+  const list = document.getElementById('chapterList');
+  // Capture l'état actuel des cases (par titre+texte pour résister au reorder)
+  const prevChecked = new Map();
+  list.querySelectorAll('.ch-item').forEach((el, i) => {
+    const cb = el.querySelector('input[type=checkbox]');
+    if (cb) prevChecked.set(i, cb.checked);
+  });
+  list.innerHTML = '';
+  chapters.forEach((ch, i) => {
+    const wc = ch.text.split(/\s+/).length;
+    const isChecked = prevChecked.has(i) ? prevChecked.get(i) : true;
+    const el = document.createElement('div');
+    el.className = 'ch-item';
+    el.innerHTML = `
+      <input type="checkbox" id="ch${i}" ${isChecked?'checked':''}>
+      <span class="ch-item-name" data-i="${i}" title="Cliquer pour renommer" style="cursor:pointer;flex:1">${ch.title}</span>
+      <span class="ch-item-words" style="margin-right:8px">${wc.toLocaleString('fr')} mots</span>
+      <button class="ch-move" data-dir="up"   data-i="${i}" ${i===0?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↑</button>
+      <button class="ch-move" data-dir="down" data-i="${i}" ${i===chapters.length-1?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↓</button>`;
+    list.appendChild(el);
+  });
+  // Handlers flèches : permute deux entrées et re-rend
+  list.querySelectorAll('.ch-move').forEach(btn => {
+    btn.onclick = (e) => {
+      e.preventDefault();
+      const i = parseInt(btn.dataset.i, 10);
+      const dir = btn.dataset.dir;
+      const j = dir === 'up' ? i - 1 : i + 1;
+      if (j < 0 || j >= chapters.length) return;
+      [chapters[i], chapters[j]] = [chapters[j], chapters[i]];
+      renderChapterList();
+    };
+  });
+  // Handler édition de titre : remplace le span par un input
+  list.querySelectorAll('.ch-item-name').forEach(span => {
+    span.onclick = () => {
+      const i = parseInt(span.dataset.i, 10);
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = chapters[i].title;
+      input.style.cssText = 'flex:1;background:var(--lift);border:1px solid var(--accent);border-radius:4px;color:#fff;padding:2px 6px;font-size:13px;font-family:inherit';
+      span.replaceWith(input);
+      input.focus();
+      input.select();
+      const commit = () => {
+        chapters[i].title = input.value.trim() || chapters[i].title;
+        renderChapterList();
+      };
+      input.onblur = commit;
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { renderChapterList(); }
+      };
+    };
+  });
 }
 
 function selectAll(val) {
