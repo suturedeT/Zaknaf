@@ -1010,16 +1010,37 @@ function extractChapterTitle(doc, fallbackNum) {
     if (partTitleIdx !== -1) {
       partTitle = all[partTitleIdx];
     } else {
-      // PARTIE trouvée seulement dans le texte du début, pas dans les candidats
-      // → on l'extrait proprement (jusqu'à la fin du mot après partie/tome/livre)
       const m = headText.match(/((?:première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|onzième|douzième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(?:partie|tome|livre|book|part)|(?:partie|tome|livre|book|part)\s+[IVXLC0-9]+)/i);
       partTitle = m ? m[1].toUpperCase().replace(/\s+/g, ' ').trim() : 'PARTIE';
     }
-    // Sous-titre : prochain candidat NON "Chapitre N" qui suit dans le doc
-    const startFrom = partTitleIdx !== -1 ? partTitleIdx + 1 : 0;
-    const subtitle = all
-      .slice(startFrom)
-      .find(t => !/^\s*(chapitre|chapter)\s/i.test(t) && !partRe.test(t) && !partOrdRe.test(t) && t !== partTitle);
+
+    // SOUS-TITRE de PARTIE : scan plus permissif que fromBody car les
+    // sous-titres de partie sont souvent en CASSE NORMALE (ex: "Cramponnés
+    // à la toile"). On parcourt les premiers éléments, on attend d'avoir
+    // vu le marqueur PARTIE, puis on prend le prochain élément court qui
+    // n'est ni un autre PARTIE ni un "Chapitre N".
+    const topEls = [...(doc.body || doc).querySelectorAll('p, div, span, header, h1, h2, h3, h4, h5, h6')].slice(0, 50);
+    let sawPart = false;
+    let subtitle = null;
+    for (const el of topEls) {
+      if (el.querySelector('p, div')) continue;
+      const t = el.textContent.replace(/\s+/g, ' ').trim();
+      if (t.length === 0) continue;
+      if (t.length > 200) break; // début du corps du chapitre
+      if (partRe.test(t) || partOrdRe.test(t)) { sawPart = true; continue; }
+      if (!sawPart) continue;
+      if (/^\s*(chapitre|chapter)\s/i.test(t)) continue;
+      if (t === partTitle) continue;
+      subtitle = t;
+      break;
+    }
+    // Fallback : essayer aussi parmi les candidats restants (heading dédié)
+    if (!subtitle) {
+      const startFrom = partTitleIdx !== -1 ? partTitleIdx + 1 : 0;
+      subtitle = all
+        .slice(startFrom)
+        .find(t => !/^\s*(chapitre|chapter)\s/i.test(t) && !partRe.test(t) && !partOrdRe.test(t) && t !== partTitle);
+    }
     return subtitle ? `${partTitle} — ${subtitle}` : partTitle;
   }
 
