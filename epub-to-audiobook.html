@@ -1120,10 +1120,13 @@ function fixSSMLElisions(ssml) {
     '$1$2'
   );
 
-  // 5) Retire les <emphasis> et <prosody> qui peuvent introduire des
-  //    micro-pauses cassant les liaisons. Le contenu textuel reste.
+  // 5) Retire les <emphasis>, <prosody> et <lang>. Les deux premiers
+  //    peuvent introduire des micro-pauses cassant les liaisons. <lang>
+  //    forcerait une prononciation anglaise des noms propres — non désiré.
+  //    Le contenu textuel reste, seule la balise disparaît.
   ssml = ssml.replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1');
   ssml = ssml.replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1');
+  ssml = ssml.replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1');
 
   return ssml;
 }
@@ -1199,8 +1202,7 @@ RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
 - Exclamations fortes : <prosody rate="104%" pitch="+1st"> sur le groupe exclamatif
 - Mots importants : <emphasis level="moderate"> avec parcimonie (max 1-2 par bloc)
 - Descriptions d'ambiance : <prosody rate="95%"> très subtil
-- Noms propres anglais (personnages, lieux) : entoure-les de <lang xml:lang="en-GB">nom</lang> pour une prononciation anglaise (ex: <lang xml:lang="en-GB">Elric</lang>, <lang xml:lang="en-GB">Stormbringer</lang>)
-- Critères noms propres : commence par une majuscule, sonorité anglo-saxonne, pas un mot français courant
+- NOMS PROPRES : lis-les avec la prononciation française, JAMAIS avec une prononciation anglaise. N'utilise PAS la balise <lang xml:lang="en-GB"> ni aucune autre balise <lang>. Tous les noms propres sont lus tels qu'écrits en suivant la phonétique française.
 - OBJECTIF : que la lecture semble continue, sans à-coups, sans silences entre segments
 
 Chaque bloc DOIT être encapsulé dans <speak>…</speak>.
