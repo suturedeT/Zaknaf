@@ -1108,6 +1108,8 @@ const PRONUNCIATIONS = {
   // Apostrophe typographique ' (U+2019) car les substitutions s'appliquent
   // APRÈS la normalisation d'apostrophe (étape 2 de fixSSMLElisions).
   'D’aerthe':       'Dersse',
+  'd’été':          'dété',
+  'D’été':          'Dété',
 };
 
 function fixSSMLElisions(ssml) {
@@ -1493,19 +1495,33 @@ function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
     esds
   );
 
-  // ── Sample entry chapter text (text format QuickTime) ──────────────────────
+  // ── Sample entry chapter text (text format QuickTime, spec exacte) ────────
+  //   Layout standard : 6 reserved + data_ref_idx (u16)
+  //                   + display_flags (u32) + text_justification (i32)
+  //                   + bg_color RGB (3×u16 = 6B) + default_text_box (4×u16 = 8B)
+  //                   + reserved (2×u32 = 8B)
+  //                   + font_number (u16) + font_face (u16)
+  //                   + reserved (u8) + reserved (u16)
+  //                   + fg_color RGB (3×u16 = 6B) + text_name Pascal string
   const textSampleEntry = atom('text',
-    u8a(0,0,0,0,0,0), u16(1),            // reserved + data ref index
-    u32(1), u32(0xFFFFFFFF), u32(0),     // display flags + text justification + bg color (24 bits)
-    u8a(0),                                // bg color last byte
-    u32(0), u32(0),                       // default text box (top, left)
-    u32(0), u32(0),                       // (bottom, right)
-    u32(0), u32(0),                       // reserved
-    u16(0), u16(0),                       // fontNumber, fontFace
-    u8a(0),                                // reserved
-    u16(0),                               // reserved
-    u32(0), u32(0x0000FF00),             // foreground color (white)
-    u8a(0)                                 // textName (empty)
+    u8a(0,0,0,0,0,0), u16(1),                  // reserved + data ref index
+    u32(0),                                    // display_flags = 0
+    u32(0),                                    // text_justification = 0 (left)
+    u16(0), u16(0), u16(0),                    // bg_color RGB (noir)
+    u16(0), u16(0), u16(0), u16(0),            // default_text_box (top, left, bottom, right)
+    u32(0), u32(0),                            // reserved
+    u16(0), u16(0),                            // font_number, font_face
+    u8a(0),                                    // reserved (u8)
+    u16(0),                                    // reserved (u16)
+    u16(0xFFFF), u16(0xFFFF), u16(0xFFFF),     // fg_color RGB (blanc)
+    u8a(0)                                     // text_name Pascal string (longueur 0)
+  );
+
+  // Atome 'text' (matrice 3x3 identité) requis dans gmhd pour les pistes texte
+  const gmhd_text = atom('text',
+    u32(0x10000), u32(0), u32(0),
+    u32(0), u32(0x10000), u32(0),
+    u32(0), u32(0), u32(0x40000000)
   );
 
   // ── Tables de samples (closure pour reconstruction) ────────────────────────
@@ -1551,8 +1567,10 @@ function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
     const chap_mdhd = atom('mdhd', TS_BASE, u32(0), u32(0), u32(CHAPTER_TS), u32(totalMs), u16(0x55C4), u16(0));
     const chap_hdlr = atom('hdlr', TS_BASE, u32(0), te.encode('text'), u32(0), u32(0), u32(0), u8a(0));
     // gmhd (generic media header) pour piste texte
+    //   gmin : graphics_mode + opcolor + balance + reserved
+    //   text : matrice 3x3 (requise par Apple Books pour les pistes de chapitres)
     const chap_gmin = atom('gmin', TS_BASE, u16(0x40), u16(0x8000), u16(0x8000), u16(0x8000), u16(0), u16(0));
-    const chap_gmhd = atom('gmhd', chap_gmin);
+    const chap_gmhd = atom('gmhd', chap_gmin, gmhd_text);
     const chap_dref = atom('dref', TS_BASE, u32(1), atom('url ', u8a(0,0,0,1)));
     const chap_dinf = atom('dinf', chap_dref);
     const chap_stsd = atom('stsd', TS_BASE, u32(1), textSampleEntry);
@@ -1590,7 +1608,29 @@ function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
     );
     const hdlr_meta = atom('hdlr', TS_BASE, u32(0), te.encode('mdir'), te.encode('appl'), u32(0), u32(0), u8a(0));
     const meta = atom('meta', TS_BASE, hdlr_meta, ilst);
-    const udta = atom('udta', meta);
+
+    // ── chpl (Nero/iTunes chapter list) — format complémentaire pour Apple ──
+    //   Très simple : timestamps en unités de 100 nanosecondes (= 10000 × ms),
+    //   chaque titre en Pascal string UTF-8. Apple Books lit ce format en plus
+    //   ou à la place de la piste de chapitres texte.
+    const chplParts = [
+      u8a(1),              // version = 1
+      u8a(0, 0, 0),        // flags = 0
+      u32(0),              // reserved
+      u8a(chapters.length) // chapter count (max 255)
+    ];
+    for (const ch of chapters) {
+      const tBytes = te.encode((ch.title || 'Chapitre').slice(0, 255));
+      // Timestamp 64-bit big-endian en unités de 100ns (1 ms = 10 000 unités)
+      let v = BigInt(ch.startMs) * 10000n;
+      const tsBE = new Uint8Array(8);
+      for (let i = 7; i >= 0; i--) { tsBE[i] = Number(v & 0xFFn); v >>= 8n; }
+      chplParts.push(tsBE);
+      chplParts.push(u8a(tBytes.length));
+      chplParts.push(tBytes);
+    }
+    const chpl = atom('chpl', ...chplParts);
+    const udta = atom('udta', meta, chpl);
 
     return atom('moov', mvhd, audio_trak, chap_trak, udta);
   }
