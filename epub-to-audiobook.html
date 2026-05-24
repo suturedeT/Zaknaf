@@ -1474,11 +1474,16 @@ function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
 
   // ── esds (descripteur ES pour MP3 dans MP4) ────────────────────────────────
   // ObjectTypeIndication = 0x6B (MPEG-1 Audio Layer 3)
+  // Longueurs CORRIGÉES :
+  //   DCD content = objType(1) + flags(1) + bufferSize(3) + maxBit(4) + avgBit(4)
+  //               + DecSpecInfo header(5) + DecSpecInfo content(0) = 18 octets
+  //   ES_Desc content = ES_ID(2) + flags(1) + DCD header(5) + DCD content(18)
+  //                   + SLD header(5) + SLD content(1) = 32 octets
   const esds = atom('esds',
     TS_BASE,
-    u8a(0x03, 0x80,0x80,0x80, 0x19),   // ES_Descriptor, len=25
+    u8a(0x03, 0x80,0x80,0x80, 0x20),   // ES_Descriptor, len=32
     u16(1), u8a(0),                      // ES_ID + flags
-    u8a(0x04, 0x80,0x80,0x80, 0x11),   // DecoderConfigDescriptor, len=17
+    u8a(0x04, 0x80,0x80,0x80, 0x12),   // DecoderConfigDescriptor, len=18
     u8a(0x6B, 0x15, 0,0,0),              // objType + streamType<<2|1 + bufferSizeDB
     u32(128000), u32(128000),             // maxBitrate, avgBitrate
     u8a(0x05, 0x80,0x80,0x80, 0x00),   // DecoderSpecificInfo, len=0 (MP3 n'en a pas)
