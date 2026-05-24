@@ -914,9 +914,6 @@ async function startConversion() {
   const totalChapters = selectedChapters.length;
   const allMp3Parts = []; // accumule les chunks MP3 encodés
   let totalSentences = 0, totalSamples = 0;
-  // Tracker des chapitres pour les CHAP frames ID3v2 (navigation iBooks)
-  const chapterMarks = [];
-  let elapsedMs = 0;
 
   // ── Boucle principale : chapitre par chapitre ─────────────────────────────
   for (let ci = 0; ci < totalChapters; ci++) {
@@ -994,8 +991,6 @@ async function startConversion() {
 
     const enc = new lamejs.Mp3Encoder(1, SR, 128);
     const FRAME = 1152;
-    // Démarrage du chapitre — capture le temps écoulé pour le CHAP frame
-    const chapterStartMs = Math.round(elapsedMs);
 
     function encodeSilence(ms) {
       const silI16 = new Int16Array(Math.floor(SR * ms / 1000));
@@ -1003,13 +998,11 @@ async function startConversion() {
         const buf = enc.encodeBuffer(silI16.subarray(i, Math.min(i+FRAME, silI16.length)));
         if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
       }
-      elapsedMs += ms;
     }
 
     for (const seg of chPcmSegs) {
       const i16 = float32ToInt16(seg.pcm);
       totalSamples += i16.length;
-      elapsedMs += (i16.length / SR) * 1000;
       for (let i = 0; i < i16.length; i += FRAME) {
         const buf = enc.encodeBuffer(i16.subarray(i, Math.min(i+FRAME, i16.length)));
         if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
@@ -1024,13 +1017,6 @@ async function startConversion() {
     if (flushed.length > 0) allMp3Parts.push(new Uint8Array(flushed));
     chPcmSegs.length = 0; // libère PCM
 
-    // Enregistre le chapitre pour les CHAP frames ID3v2
-    chapterMarks.push({
-      title: ch.title || `Chapitre ${ci+1}`,
-      startMs: chapterStartMs,
-      endMs: Math.round(elapsedMs),
-    });
-
     setPhaseBar(3,100); setPhase(3,'done');
     updateGlobal((ci+1)/totalChapters * 0.97, `Ch.${ci+1}/${totalChapters} encodé`);
     log(`✓ Ch.${ci+1} MP3 encodé`,'ok');
@@ -1039,8 +1025,7 @@ async function startConversion() {
 
   // ── Finalisation MP3 ──────────────────────────────────────────────────────
   updateGlobal(0.99,'Finalisation…');
-  const id3Parts = buildID3v2(bookMeta.title, bookMeta.author, chapterMarks);
-  log(`📑 ${chapterMarks.length} marqueurs de chapitre intégrés au MP3`,'ok');
+  const id3Parts = buildID3v2(bookMeta.title, bookMeta.author);
   const mp3Blob = new Blob([...id3Parts, ...allMp3Parts], { type:'audio/mpeg' });
   const url = URL.createObjectURL(mp3Blob);
   const sizeMB = (mp3Blob.size/1024/1024).toFixed(1);
@@ -1342,72 +1327,24 @@ async function googleTTS(ssml, retries = 3) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ID3v2.3 TAG BUILDER — requis par Apple Books pour reconnaître le fichier
+// ID3v2.4 TAG BUILDER — métadonnées (titre, auteur, album, genre Audiobook)
+// Note : pas de CHAP/CTOC, Apple Books ne les lit pas dans les MP3.
 // ─────────────────────────────────────────────────────────────────────────────
-function buildID3v2(title, author, chapters = []) {
+function buildID3v2(title, author) {
   const enc = new TextEncoder();
+  const syncsafe32 = n => [(n>>21)&0x7F, (n>>14)&0x7F, (n>>7)&0x7F, n&0x7F];
 
-  // Synchsafe 32-bit (chaque octet n'utilise que 7 bits) — requis en ID3v2.4
-  function syncsafe32(n) {
-    return [(n>>21)&0x7F, (n>>14)&0x7F, (n>>7)&0x7F, n&0x7F];
-  }
-
-  // Frame ID3v2.4 générique : header de 10 octets + data
-  //   ID (4) + Size synchsafe (4) + Flags (2 = 0x0000) + data
-  function wrapFrame(id, data) {
+  function makeTextFrame(id, text) {
+    const textBytes = enc.encode(text);
+    const data = new Uint8Array(1 + textBytes.length);
+    data[0] = 0x03; // UTF-8 (valide en ID3v2.4)
+    data.set(textBytes, 1);
     const frame = new Uint8Array(10 + data.length);
     frame.set(enc.encode(id), 0);
     const ss = syncsafe32(data.length);
     frame[4]=ss[0]; frame[5]=ss[1]; frame[6]=ss[2]; frame[7]=ss[3];
-    // frame[8], frame[9] = 0 (flags) — déjà initialisés à 0
     frame.set(data, 10);
     return frame;
-  }
-
-  // Frame texte (TIT2/TPE1/TALB/TCON) : 1 octet encoding + texte UTF-8
-  function makeTextFrame(id, text) {
-    const textBytes = enc.encode(text);
-    const data = new Uint8Array(1 + textBytes.length);
-    data[0] = 0x03; // UTF-8
-    data.set(textBytes, 1);
-    return wrapFrame(id, data);
-  }
-
-  // Frame CHAP : 1 chapitre avec titre + timestamps de début/fin (ms)
-  function makeCHAPFrame(elementId, startMs, endMs, chTitle) {
-    const idBytes = enc.encode(elementId);
-    const titleSub = makeTextFrame('TIT2', chTitle);
-    const data = new Uint8Array(idBytes.length + 1 + 16 + titleSub.length);
-    let off = 0;
-    data.set(idBytes, off); off += idBytes.length;
-    data[off++] = 0; // null-terminator de l'element ID
-    // Start time (4 octets big-endian, en ms)
-    data[off++]=(startMs>>>24)&0xFF; data[off++]=(startMs>>>16)&0xFF;
-    data[off++]=(startMs>>>8)&0xFF;  data[off++]=startMs&0xFF;
-    // End time
-    data[off++]=(endMs>>>24)&0xFF;   data[off++]=(endMs>>>16)&0xFF;
-    data[off++]=(endMs>>>8)&0xFF;    data[off++]=endMs&0xFF;
-    // Start offset & End offset (0xFFFFFFFF = non utilisé, on se sert des temps)
-    for (let k=0; k<8; k++) data[off++] = 0xFF;
-    // Sub-frame TIT2 embarquée (le titre du chapitre)
-    data.set(titleSub, off);
-    return wrapFrame('CHAP', data);
-  }
-
-  // Frame CTOC : table des matières référençant les CHAP par leur element ID
-  function makeCTOCFrame(chapterIds) {
-    const tocId = enc.encode('toc');
-    const childBytes = chapterIds.map(id => enc.encode(id));
-    let dataLen = tocId.length + 1 + 1 + 1;
-    childBytes.forEach(b => dataLen += b.length + 1);
-    const data = new Uint8Array(dataLen);
-    let off = 0;
-    data.set(tocId, off); off += tocId.length;
-    data[off++] = 0;       // null-terminator
-    data[off++] = 0x03;    // flags : top-level + ordered
-    data[off++] = chapterIds.length;
-    childBytes.forEach(b => { data.set(b, off); off += b.length; data[off++] = 0; });
-    return wrapFrame('CTOC', data);
   }
 
   const frames = [
@@ -1416,19 +1353,6 @@ function buildID3v2(title, author, chapters = []) {
     makeTextFrame('TALB', title  || 'Audiobook'),
     makeTextFrame('TCON', 'Audiobook'),
   ];
-
-  // Ajoute les chapitres navigables si fournis
-  if (chapters.length > 0) {
-    const totalMs = chapters[chapters.length - 1].endMs;
-    // TLEN aide Apple Books à seek correctement dans le fichier
-    frames.push(makeTextFrame('TLEN', String(totalMs)));
-    const chapIds = chapters.map((_, i) => `ch${String(i+1).padStart(3,'0')}`);
-    // CHAP frames AVANT la CTOC (Apple Books parcourt d'abord les CHAP)
-    chapters.forEach((ch, i) => {
-      frames.push(makeCHAPFrame(chapIds[i], ch.startMs, ch.endMs, ch.title || `Chapitre ${i+1}`));
-    });
-    frames.push(makeCTOCFrame(chapIds));
-  }
 
   const total = frames.reduce((s,f) => s + f.length, 0);
   const hdr = new Uint8Array(10);
