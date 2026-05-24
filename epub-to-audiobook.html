@@ -1328,12 +1328,19 @@ async function googleTTS(ssml, retries = 3) {
 function buildID3v2(title, author, chapters = []) {
   const enc = new TextEncoder();
 
-  // Frame ID3v2.3 générique : header de 10 octets + data
+  // Synchsafe 32-bit (chaque octet n'utilise que 7 bits) — requis en ID3v2.4
+  function syncsafe32(n) {
+    return [(n>>21)&0x7F, (n>>14)&0x7F, (n>>7)&0x7F, n&0x7F];
+  }
+
+  // Frame ID3v2.4 générique : header de 10 octets + data
+  //   ID (4) + Size synchsafe (4) + Flags (2 = 0x0000) + data
   function wrapFrame(id, data) {
     const frame = new Uint8Array(10 + data.length);
     frame.set(enc.encode(id), 0);
-    const sz = data.length;
-    frame[4]=(sz>>24)&0xFF; frame[5]=(sz>>16)&0xFF; frame[6]=(sz>>8)&0xFF; frame[7]=sz&0xFF;
+    const ss = syncsafe32(data.length);
+    frame[4]=ss[0]; frame[5]=ss[1]; frame[6]=ss[2]; frame[7]=ss[3];
+    // frame[8], frame[9] = 0 (flags) — déjà initialisés à 0
     frame.set(data, 10);
     return frame;
   }
@@ -1393,17 +1400,24 @@ function buildID3v2(title, author, chapters = []) {
 
   // Ajoute les chapitres navigables si fournis
   if (chapters.length > 0) {
+    const totalMs = chapters[chapters.length - 1].endMs;
+    // TLEN aide Apple Books à seek correctement dans le fichier
+    frames.push(makeTextFrame('TLEN', String(totalMs)));
     const chapIds = chapters.map((_, i) => `ch${String(i+1).padStart(3,'0')}`);
-    frames.push(makeCTOCFrame(chapIds));
+    // CHAP frames AVANT la CTOC (Apple Books parcourt d'abord les CHAP)
     chapters.forEach((ch, i) => {
       frames.push(makeCHAPFrame(chapIds[i], ch.startMs, ch.endMs, ch.title || `Chapitre ${i+1}`));
     });
+    frames.push(makeCTOCFrame(chapIds));
   }
 
   const total = frames.reduce((s,f) => s + f.length, 0);
   const hdr = new Uint8Array(10);
-  hdr[0]=0x49; hdr[1]=0x44; hdr[2]=0x33; hdr[3]=0x03; hdr[4]=0x00; hdr[5]=0x00;
-  hdr[6]=(total>>21)&0x7F; hdr[7]=(total>>14)&0x7F; hdr[8]=(total>>7)&0x7F; hdr[9]=total&0x7F;
+  hdr[0]=0x49; hdr[1]=0x44; hdr[2]=0x33;  // "ID3"
+  hdr[3]=0x04; hdr[4]=0x00;               // version 2.4.0
+  hdr[5]=0x00;                            // flags
+  const tagSize = syncsafe32(total);
+  hdr[6]=tagSize[0]; hdr[7]=tagSize[1]; hdr[8]=tagSize[2]; hdr[9]=tagSize[3];
   return [hdr, ...frames];
 }
 
