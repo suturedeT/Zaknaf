@@ -868,59 +868,51 @@ async function parseEpub(zip) {
   return { title, author, coverUrl, chapters };
 }
 
-// Extrait un titre de chapitre lisible. Stratégie en cascade :
-//   1. Cherche h1-h6 (cas standard)
-//   2. Fallback : parcourt les premiers éléments du body, capture les textes
-//      courts (< 100 chars) avant le premier vrai paragraphe long.
-//      Couvre les ePub utilisant <div class="title">, <p class="chap"> etc.
+// Extrait un titre de chapitre lisible. On COMBINE deux sources :
+//   1. Tous les headings h1-h6 (standard)
+//   2. Les premiers éléments du body qui RESSEMBLENT à un titre (couvre les
+//      sous-titres en majuscules placés dans un <p> avant le corps du texte)
+// Puis on déduplique en gardant le plus long de chaque groupe de titres
+// redondants.
 function extractChapterTitle(doc, fallbackNum) {
-  let candidates = [];
-
-  // Tentative 1 : headings standards
-  candidates = [...doc.querySelectorAll('h1, h2, h3, h4, h5, h6')]
+  // Source 1 : headings standards (jusqu'à 4)
+  const fromHeadings = [...doc.querySelectorAll('h1, h2, h3, h4, h5, h6')]
     .slice(0, 4)
     .map(h => h.textContent.replace(/\s+/g, ' ').trim());
 
-  // Tentative 2 : si peu/pas de headings, on regarde les premiers éléments
-  // textuels et on prend ceux qui ressemblent à un titre (court, en majuscules
-  // partielles, ou contenant "chapitre"/"prologue"/"épilogue"/numéros romains).
-  if (candidates.filter(t => t.length > 0).length < 2) {
-    const blocks = [...(doc.body || doc).querySelectorAll('p, div, span')].slice(0, 25);
-    const found = [];
-    let longTextSeen = false;
-    for (const el of blocks) {
-      // Évite de descendre dans des conteneurs déjà capturés
-      if (el.querySelector('p, div')) continue;
-      const t = el.textContent.replace(/\s+/g, ' ').trim();
-      if (t.length === 0) continue;
-      if (t.length > 120) { longTextSeen = true; break; } // début du corps du chapitre
-      // Critères de "titre" : court ET (majuscules || mot-clé || nombre || romains)
-      const looksLikeTitle =
-        /^[A-ZÉÈÊÀÂÔÛÎÇ0-9\s'’.\-:!?—]+$/.test(t) ||                        // majuscules
-        /^\s*(chapitre|chapter|prologue|épilogue|epilogue|avant[- ]propos|préface|preface|partie|livre)/i.test(t) || // mot-clé
-        /^\s*[IVXLC]+\s*$/i.test(t) ||                                      // chiffres romains
-        /^\s*\d+\s*$/.test(t);                                               // nombre seul
-      if (looksLikeTitle) found.push(t);
-      if (found.length >= 3) break;
-    }
-    if (found.length > candidates.filter(t => t.length > 0).length) {
-      candidates = found;
-    }
+  // Source 2 : premiers éléments body qui ressemblent à un titre
+  //   - texte court (<120 chars)
+  //   - tout majuscules / mot-clé chapitre / chiffres romains / nombre seul
+  //   - on s'arrête au premier paragraphe long (= début du corps du chapitre)
+  const fromBody = [];
+  const blocks = [...(doc.body || doc).querySelectorAll('p, div, span, header')].slice(0, 30);
+  for (const el of blocks) {
+    if (el.querySelector('p, div')) continue; // évite les wrappers
+    const t = el.textContent.replace(/\s+/g, ' ').trim();
+    if (t.length === 0) continue;
+    if (t.length > 120) break; // début du corps du chapitre
+    const looksLikeTitle =
+      /^[A-ZÉÈÊÀÂÔÛÎÇŸÆŒ0-9\s'’.\-:!?—,]+$/.test(t) ||
+      /^\s*(chapitre|chapter|prologue|épilogue|epilogue|avant[- ]propos|préface|preface|partie|livre|book|part)/i.test(t) ||
+      /^\s*[IVXLCDM]+\s*$/i.test(t) ||
+      /^\s*\d+\s*$/.test(t);
+    if (looksLikeTitle) fromBody.push(t);
+    if (fromBody.length >= 3) break;
   }
 
-  // Nettoyage : filtre vides + trop longs
-  candidates = candidates
+  // Fusion + nettoyage des deux sources
+  const all = [...fromHeadings, ...fromBody]
     .map(t => t.replace(/\s+/g, ' ').trim())
     .filter(t => t.length > 0 && t.length < 200);
 
-  // Déduplique : si un candidat inclut un autre, on garde le plus long
+  // Déduplique : si deux titres se contiennent l'un l'autre, garde le plus long
   const unique = [];
-  for (const t of candidates) {
+  for (const t of all) {
     const dupIdx = unique.findIndex(u => u === t || u.includes(t) || t.includes(u));
     if (dupIdx === -1) {
       unique.push(t);
     } else if (t.length > unique[dupIdx].length) {
-      unique[dupIdx] = t; // remplace par le plus long
+      unique[dupIdx] = t;
     }
   }
 
