@@ -847,22 +847,64 @@ async function parseEpub(zip) {
   return { title, author, coverUrl, chapters };
 }
 
-// Extrait un titre de chapitre lisible en combinant les premiers headings.
-// Stratégie : récupère jusqu'aux 3 premiers h1/h2/h3 du document, déduplique,
-// concatène avec " — " pour produire ex: "Chapitre 12 — QUAND TOUT N'EST...".
+// Extrait un titre de chapitre lisible. Stratégie en cascade :
+//   1. Cherche h1-h6 (cas standard)
+//   2. Fallback : parcourt les premiers éléments du body, capture les textes
+//      courts (< 100 chars) avant le premier vrai paragraphe long.
+//      Couvre les ePub utilisant <div class="title">, <p class="chap"> etc.
 function extractChapterTitle(doc, fallbackNum) {
-  const headings = [...doc.querySelectorAll('h1, h2, h3, h4')]
-    .slice(0, 3)
-    .map(h => h.textContent.replace(/\s+/g, ' ').trim())
-    .filter(t => t.length > 0 && t.length < 200);
-  // Déduplique en gardant l'ordre, et filtre les sous-chaînes redondantes
-  const unique = [];
-  for (const t of headings) {
-    if (unique.some(u => u === t || u.includes(t) || t.includes(u))) continue;
-    unique.push(t);
+  let candidates = [];
+
+  // Tentative 1 : headings standards
+  candidates = [...doc.querySelectorAll('h1, h2, h3, h4, h5, h6')]
+    .slice(0, 4)
+    .map(h => h.textContent.replace(/\s+/g, ' ').trim());
+
+  // Tentative 2 : si peu/pas de headings, on regarde les premiers éléments
+  // textuels et on prend ceux qui ressemblent à un titre (court, en majuscules
+  // partielles, ou contenant "chapitre"/"prologue"/"épilogue"/numéros romains).
+  if (candidates.filter(t => t.length > 0).length < 2) {
+    const blocks = [...(doc.body || doc).querySelectorAll('p, div, span')].slice(0, 25);
+    const found = [];
+    let longTextSeen = false;
+    for (const el of blocks) {
+      // Évite de descendre dans des conteneurs déjà capturés
+      if (el.querySelector('p, div')) continue;
+      const t = el.textContent.replace(/\s+/g, ' ').trim();
+      if (t.length === 0) continue;
+      if (t.length > 120) { longTextSeen = true; break; } // début du corps du chapitre
+      // Critères de "titre" : court ET (majuscules || mot-clé || nombre || romains)
+      const looksLikeTitle =
+        /^[A-ZÉÈÊÀÂÔÛÎÇ0-9\s'’.\-:!?—]+$/.test(t) ||                        // majuscules
+        /^\s*(chapitre|chapter|prologue|épilogue|epilogue|avant[- ]propos|préface|preface|partie|livre)/i.test(t) || // mot-clé
+        /^\s*[IVXLC]+\s*$/i.test(t) ||                                      // chiffres romains
+        /^\s*\d+\s*$/.test(t);                                               // nombre seul
+      if (looksLikeTitle) found.push(t);
+      if (found.length >= 3) break;
+    }
+    if (found.length > candidates.filter(t => t.length > 0).length) {
+      candidates = found;
+    }
   }
+
+  // Nettoyage : filtre vides + trop longs
+  candidates = candidates
+    .map(t => t.replace(/\s+/g, ' ').trim())
+    .filter(t => t.length > 0 && t.length < 200);
+
+  // Déduplique : si un candidat inclut un autre, on garde le plus long
+  const unique = [];
+  for (const t of candidates) {
+    const dupIdx = unique.findIndex(u => u === t || u.includes(t) || t.includes(u));
+    if (dupIdx === -1) {
+      unique.push(t);
+    } else if (t.length > unique[dupIdx].length) {
+      unique[dupIdx] = t; // remplace par le plus long
+    }
+  }
+
   if (unique.length === 0) return `Chapitre ${fallbackNum}`;
-  return unique.join(' — ');
+  return unique.slice(0, 3).join(' — ');
 }
 
 function extractText(node) {
