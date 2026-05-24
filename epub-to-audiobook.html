@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ÉpubSon — Convertisseur Livre Audio</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.0/lame.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap');
 
@@ -912,11 +911,49 @@ async function startConversion() {
 
   const BATCH = 8, CONCURRENCY = 4, SILENCE = 0.003, SR = 44100;
   const totalChapters = selectedChapters.length;
-  const allMp3Parts = []; // accumule les chunks MP3 encodés
   let totalSentences = 0, totalSamples = 0;
   // Tracking des chapitres pour la piste de chapitres M4B
   const chapterMarks = [];
   let elapsedMs = 0;
+
+  // ── Encodeur AAC unique pour TOUT le livre (WebCodecs API) ─────────────────
+  // AAC est le codec attendu par iTunes/Apple Music/Apple Books dans un M4B.
+  // Le MP3-in-MP4 est techniquement valide mais iTunes ne l'accepte pas.
+  if (!('AudioEncoder' in window)) {
+    alert('Ton navigateur ne supporte pas WebCodecs (AudioEncoder). Utilise Chrome/Edge récent ou Safari 17+.');
+    return;
+  }
+  const aacFrames = []; // chaque entrée = Uint8Array d'une trame AAC complète
+  const aacEncoder = new AudioEncoder({
+    output: (chunk) => {
+      const buf = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(buf);
+      aacFrames.push(buf);
+    },
+    error: (e) => { console.error('AudioEncoder error:', e); log(`⚠ Erreur AAC : ${e.message}`,'err'); }
+  });
+  aacEncoder.configure({
+    codec: 'mp4a.40.2',     // AAC-LC
+    sampleRate: SR,
+    numberOfChannels: 1,
+    bitrate: 64000,         // 64 kbps suffit largement pour de la narration mono
+    bitrateMode: 'constant'
+  });
+  let audioTimestampUs = 0; // timestamp en µs pour AudioData
+  function encodePCMtoAAC(pcmF32) {
+    if (pcmF32.length === 0) return;
+    const data = new AudioData({
+      format: 'f32',
+      sampleRate: SR,
+      numberOfFrames: pcmF32.length,
+      numberOfChannels: 1,
+      timestamp: audioTimestampUs,
+      data: pcmF32
+    });
+    aacEncoder.encode(data);
+    data.close();
+    audioTimestampUs += (pcmF32.length * 1_000_000) / SR;
+  }
 
   // ── Boucle principale : chapitre par chapitre ─────────────────────────────
   for (let ci = 0; ci < totalChapters; ci++) {
@@ -987,40 +1024,28 @@ async function startConversion() {
     }
     setPhaseBar(2,100); setPhase(2,'done');
 
-    // Phase 3 : Encodage MP3 du chapitre — libère PCM immédiatement
+    // Phase 3 : Encodage AAC du chapitre — libère PCM immédiatement
     setPhase(3,'active');
-    setPhaseDetail(3, `MP3 Ch.${ci+1}/${totalChapters} — ${ch.title}`);
-    log(`🎵 Encodage MP3 : ${ch.title}…`,'hi');
+    setPhaseDetail(3, `AAC Ch.${ci+1}/${totalChapters} — ${ch.title}`);
+    log(`🎵 Encodage AAC : ${ch.title}…`,'hi');
 
-    const enc = new lamejs.Mp3Encoder(1, SR, 128);
-    const FRAME = 1152;
     const chapterStartMs = Math.round(elapsedMs);
 
-    function encodeSilence(ms) {
-      const silI16 = new Int16Array(Math.floor(SR * ms / 1000));
-      for (let i = 0; i < silI16.length; i += FRAME) {
-        const buf = enc.encodeBuffer(silI16.subarray(i, Math.min(i+FRAME, silI16.length)));
-        if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
-      }
-      elapsedMs += ms;
-    }
-
     for (const seg of chPcmSegs) {
-      const i16 = float32ToInt16(seg.pcm);
-      totalSamples += i16.length;
-      elapsedMs += (i16.length / SR) * 1000;
-      for (let i = 0; i < i16.length; i += FRAME) {
-        const buf = enc.encodeBuffer(i16.subarray(i, Math.min(i+FRAME, i16.length)));
-        if (buf.length > 0) allMp3Parts.push(new Uint8Array(buf));
-      }
-      encodeSilence(seg.gapMs); // pause adaptée à la ponctuation
+      totalSamples += seg.pcm.length;
+      elapsedMs += (seg.pcm.length / SR) * 1000;
+      encodePCMtoAAC(seg.pcm);
+      // Pause adaptée à la ponctuation
+      const silLen = Math.floor(SR * seg.gapMs / 1000);
+      if (silLen > 0) encodePCMtoAAC(new Float32Array(silLen));
+      elapsedMs += seg.gapMs;
     }
 
     // Pause de fin de chapitre (1 seconde)
-    encodeSilence(1000);
+    const endSilenceLen = SR;
+    encodePCMtoAAC(new Float32Array(endSilenceLen));
+    elapsedMs += 1000;
 
-    const flushed = enc.flush();
-    if (flushed.length > 0) allMp3Parts.push(new Uint8Array(flushed));
     chPcmSegs.length = 0; // libère PCM
 
     chapterMarks.push({
@@ -1031,23 +1056,20 @@ async function startConversion() {
 
     setPhaseBar(3,100); setPhase(3,'done');
     updateGlobal((ci+1)/totalChapters * 0.97, `Ch.${ci+1}/${totalChapters} encodé`);
-    log(`✓ Ch.${ci+1} MP3 encodé`,'ok');
+    log(`✓ Ch.${ci+1} AAC encodé`,'ok');
     await sleep(0);
   }
 
-  // ── Finalisation M4B (livre audio avec chapitres navigables) ─────────────
-  updateGlobal(0.99,'Finalisation M4B…');
-  // Concatène tous les chunks MP3 en un seul buffer pour parsing/muxing
-  let mp3TotalLen = 0;
-  allMp3Parts.forEach(p => mp3TotalLen += p.length);
-  const mp3Bytes = new Uint8Array(mp3TotalLen);
-  let mp3Off = 0;
-  allMp3Parts.forEach(p => { mp3Bytes.set(p, mp3Off); mp3Off += p.length; });
-  allMp3Parts.length = 0; // libère la mémoire des chunks
+  // Flush final : assure que toutes les trames AAC sont émises
+  await aacEncoder.flush();
+  aacEncoder.close();
 
-  log(`📦 Construction M4B (${chapterMarks.length} chapitres)…`,'hi');
+  // ── Finalisation M4B (livre audio AAC avec chapitres navigables) ─────────
+  updateGlobal(0.99,'Finalisation M4B…');
+
+  log(`📦 Construction M4B AAC (${chapterMarks.length} chapitres, ${aacFrames.length} trames)…`,'hi');
   await sleep(0); // yield au navigateur avant la phase synchrone
-  const m4bParts = buildM4B(mp3Bytes, chapterMarks, bookMeta.title, bookMeta.author, SR);
+  const m4bParts = buildM4B(aacFrames, chapterMarks, bookMeta.title, bookMeta.author, SR);
   const m4bBlob  = new Blob(m4bParts, { type:'audio/mp4' });
   const url      = URL.createObjectURL(m4bBlob);
   const sizeMB   = (m4bBlob.size/1024/1024).toFixed(1);
@@ -1389,10 +1411,10 @@ function buildID3v2(title, author) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M4B BUILDER — wrap MP3 audio + chapters dans un container MP4/M4B
-// Compatible Apple Books iOS (piste de chapitres QuickTime navigable)
+// M4B BUILDER — wrap AAC audio + chapters dans un container MP4/M4B
+// Compatible iTunes, Apple Music, Apple Books iOS (piste de chapitres QT)
 // ─────────────────────────────────────────────────────────────────────────────
-function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
+function buildM4B(aacFrames, chapters, title, author, sampleRate) {
   // ── Helpers ────────────────────────────────────────────────────────────────
   const te = new TextEncoder();
   const u16 = v => { const a = new Uint8Array(2); a[0]=(v>>8)&0xFF; a[1]=v&0xFF; return a; };
@@ -1414,30 +1436,11 @@ function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
     return out;
   };
 
-  // ── Parse MP3 frames (offset + size) ───────────────────────────────────────
-  const frames = [];
-  {
-    const BR  = [0,32,40,48,56,64,80,96,112,128,160,192,224,256,320];
-    const SR  = [44100,48000,32000];
-    let off = 0;
-    while (off < mp3Bytes.length - 4) {
-      if (mp3Bytes[off]===0xFF && (mp3Bytes[off+1]&0xE0)===0xE0) {
-        const b1=mp3Bytes[off+1], b2=mp3Bytes[off+2];
-        const ver=(b1>>3)&0x3, lyr=(b1>>1)&0x3;
-        const brI=(b2>>4)&0xF, srI=(b2>>2)&0x3, pad=(b2>>1)&0x1;
-        if (ver===3 && lyr===1 && brI>0 && brI<15 && srI<3) {
-          const sz = ((144*BR[brI]*1000)/SR[srI] |0) + pad;
-          if (off + sz <= mp3Bytes.length) {
-            frames.push({ offset: off, size: sz });
-            off += sz;
-            continue;
-          }
-        }
-      }
-      off++;
-    }
-  }
-  if (frames.length === 0) throw new Error('Aucune trame MP3 valide trouvée');
+  // ── Trames AAC (déjà fournies par WebCodecs, pas de parsing nécessaire) ───
+  // Chaque entrée de aacFrames est un Uint8Array d'une trame AAC raw (pas ADTS).
+  // Pour MP4, on stocke les trames raw concaténées dans mdat + stsz par trame.
+  if (!aacFrames || aacFrames.length === 0) throw new Error('Aucune trame AAC fournie');
+  const frames = aacFrames.map(buf => ({ size: buf.length, data: buf }));
 
   // ── Échantillons texte des chapitres (format QuickTime) ────────────────────
   //   2 octets big-endian (taille du texte) + texte UTF-8
@@ -1450,7 +1453,7 @@ function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
   const MOVIE_TS = 1000;
   const AUDIO_TS = sampleRate;
   const CHAPTER_TS = 1000;
-  const FRAME_SAMPLES = 1152; // MPEG-1 Layer 3
+  const FRAME_SAMPLES = 1024; // AAC-LC frame size
   const totalMs = chapters.length ? chapters[chapters.length-1].endMs : 0;
   const audioMediaDuration = frames.length * FRAME_SAMPLES;
   const AUDIO_TID = 1, CHAPTER_TID = 2;
@@ -1472,21 +1475,33 @@ function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
     u32(3)  // next track ID
   );
 
-  // ── esds (descripteur ES pour MP3 dans MP4) ────────────────────────────────
-  // ObjectTypeIndication = 0x6B (MPEG-1 Audio Layer 3)
-  // Longueurs CORRIGÉES :
-  //   DCD content = objType(1) + flags(1) + bufferSize(3) + maxBit(4) + avgBit(4)
-  //               + DecSpecInfo header(5) + DecSpecInfo content(0) = 18 octets
-  //   ES_Desc content = ES_ID(2) + flags(1) + DCD header(5) + DCD content(18)
-  //                   + SLD header(5) + SLD content(1) = 32 octets
+  // ── esds (descripteur ES pour AAC-LC dans MP4) ─────────────────────────────
+  // ObjectTypeIndication = 0x40 (MPEG-4 Audio)
+  // AudioSpecificConfig 2 octets pour AAC-LC mono 44100Hz :
+  //   audioObjectType=2 (00010), samplingFreqIndex=4 pour 44100 (0100),
+  //   channelConfig=1 (0001), suivi de 3 bits réservés = 00010 0100 0001 000
+  //   = 0001 0010 0000 1000 = 0x12 0x08
+  //
+  // Longueurs :
+  //   DCD content = objType(1)+flags(1)+bufSize(3)+maxBR(4)+avgBR(4)
+  //               + DecSpecInfo header(5) + DecSpecInfo content(2) = 20
+  //   ES_Desc content = ES_ID(2)+flags(1) + DCD header(5)+DCD(20)
+  //                   + SLD header(5)+SLD(1) = 34
+  const SAMPLE_RATE_INDEX = { 96000:0, 88200:1, 64000:2, 48000:3, 44100:4, 32000:5, 24000:6, 22050:7, 16000:8 };
+  const srIdx = SAMPLE_RATE_INDEX[sampleRate] ?? 4;
+  // AudioSpecificConfig : (objType=2)<<11 | (srIdx)<<7 | (chCfg=1)<<3 | 0
+  const ascValue = (2 << 11) | (srIdx << 7) | (1 << 3);
+  const asc = u8a((ascValue >> 8) & 0xFF, ascValue & 0xFF);
+
   const esds = atom('esds',
     TS_BASE,
-    u8a(0x03, 0x80,0x80,0x80, 0x20),   // ES_Descriptor, len=32
+    u8a(0x03, 0x80,0x80,0x80, 0x22),   // ES_Descriptor, len=34
     u16(1), u8a(0),                      // ES_ID + flags
-    u8a(0x04, 0x80,0x80,0x80, 0x12),   // DecoderConfigDescriptor, len=18
-    u8a(0x6B, 0x15, 0,0,0),              // objType + streamType<<2|1 + bufferSizeDB
-    u32(128000), u32(128000),             // maxBitrate, avgBitrate
-    u8a(0x05, 0x80,0x80,0x80, 0x00),   // DecoderSpecificInfo, len=0 (MP3 n'en a pas)
+    u8a(0x04, 0x80,0x80,0x80, 0x14),   // DecoderConfigDescriptor, len=20
+    u8a(0x40, 0x15, 0,0,0),              // objType=0x40 (MPEG-4 Audio) + streamType<<2|1 + bufSize
+    u32(64000), u32(64000),               // maxBitrate, avgBitrate
+    u8a(0x05, 0x80,0x80,0x80, 0x02),   // DecoderSpecificInfo, len=2
+    asc,                                  // AudioSpecificConfig
     u8a(0x06, 0x80,0x80,0x80, 0x01),   // SLConfigDescriptor, len=1
     u8a(0x02)
   );
@@ -1671,17 +1686,11 @@ function buildM4B(mp3Bytes, chapters, title, author, sampleRate) {
   const mdatSize = mdatHeaderSize + audioTotalSize + chapterSamples.reduce((a,b)=>a+b.length, 0);
   const mdatHeader = cat(u32(mdatSize), te.encode('mdat'));
 
-  // ── Sortie : parts pour le Blob (zéro copie supplémentaire) ───────────────
-  // Les trames MP3 étant contiguës dans mp3Bytes (lamejs émet uniquement
-  // des trames complètes), on utilise une subarray (vue O(1) sans copie).
-  // Le Blob constructeur gère l'assemblage final efficacement.
-  const firstFrame = frames[0];
-  const lastFrame  = frames[frames.length - 1];
-  const audioView  = mp3Bytes.subarray(firstFrame.offset, lastFrame.offset + lastFrame.size);
-
-  // Retourne un tableau de parts plutôt qu'un Uint8Array géant — laisse le
-  // Blob constructor faire l'assemblage sans allouer ~300MB en pic mémoire.
-  return [ftyp, moov, mdatHeader, audioView, ...chapterSamples];
+  // ── Sortie : parts pour le Blob (zéro grosse allocation supplémentaire) ──
+  // Chaque trame AAC est déjà un Uint8Array. On les passe au Blob constructor
+  // qui gère l'assemblage en interne sans concaténation préalable côté JS.
+  const audioParts = frames.map(f => f.data);
+  return [ftyp, moov, mdatHeader, ...audioParts, ...chapterSamples];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
