@@ -493,6 +493,14 @@ header {
     <div id="voicePicker" style="display:none;margin-top:16px">
       <div style="font-size:12px;color:var(--ink-dim);margin-bottom:8px;letter-spacing:0.04em">Choisir la voix de narration</div>
       <div class="voice-grid" id="voiceGrid"></div>
+      <!-- Toggle SSML enrichi via Claude -->
+      <label style="display:flex;align-items:center;gap:10px;margin-top:16px;padding:10px 12px;background:var(--lift);border:1px solid var(--border);border-radius:8px;cursor:pointer">
+        <input type="checkbox" id="claudeToggle" checked style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
+        <div style="flex:1">
+          <div style="font-size:13px;color:#fff">SSML enrichi via Claude</div>
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">Si désactivé : SSML simple, zéro appel API Anthropic (coût $0)</div>
+        </div>
+      </label>
     </div>
   </div>
 
@@ -753,6 +761,13 @@ function validateKeys() {
 
 function showStep2() {
   document.getElementById('voicePicker').style.display = 'block';
+  // Restaure le toggle Claude depuis localStorage (par défaut activé)
+  const claudeToggle = document.getElementById('claudeToggle');
+  const stored = localStorage.getItem('epubson_use_claude');
+  claudeToggle.checked = stored === null ? true : stored === '1';
+  claudeToggle.onchange = () => {
+    localStorage.setItem('epubson_use_claude', claudeToggle.checked ? '1' : '0');
+  };
   const dz = document.getElementById('dropzone');
   dz.style.display = 'block'; dz.classList.add('fade-in');
   setupDrop();
@@ -1238,6 +1253,15 @@ function segmentChapter(ch) {
 // CLAUDE SSML BATCH
 // ─────────────────────────────────────────────────────────────────────────────
 async function generateSSMLBatch(sentences) {
+  // Si Claude est désactivé via le toggle, on génère un SSML simple sans
+  // appel API : chaque phrase est juste enveloppée dans <speak> puis traitée
+  // par fixSSMLElisions (qui applique les substitutions personnalisées et
+  // les corrections d'élision). Zéro coût API Anthropic.
+  const claudeToggle = document.getElementById('claudeToggle');
+  if (claudeToggle && !claudeToggle.checked) {
+    return sentences.map(s => fixSSMLElisions(`<speak>${escapeXml(s)}</speak>`));
+  }
+
   const prompt = `Tu es un expert en narration de livres audio en français pour Google Cloud TTS Neural2.
 
 Transforme chaque bloc numéroté en SSML valide pour une lecture FLUIDE et NATURELLE.
