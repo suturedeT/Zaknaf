@@ -1099,6 +1099,9 @@ const PRONUNCIATIONS = {
   'Menzoberranzan': 'menzoberanne',  // graphie canonique D&D (2 r, 1 z)
   'Jarlaxle':       'jarlax',
   'Crenshinibon':   'Crenshinibonne',
+  // Apostrophe typographique ' (U+2019) car les substitutions s'appliquent
+  // APRÈS la normalisation d'apostrophe (étape 2 de fixSSMLElisions).
+  'D’aerthe':       'D’ersse',
 };
 
 function fixSSMLElisions(ssml) {
