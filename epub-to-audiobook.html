@@ -1088,6 +1088,15 @@ const APOS_ALL = /['‘’‚‛ʹʻʼʽˈ`´́]/g;
 const APOS_VARIANTS = APOS_ALL;
 const APOS = '’';  // ' typographique
 
+// Table de prononciations personnalisées : { motOriginal: écriturePhonétique }
+// Le mot original est matché en \b...\b case-insensitive, donc toutes les casses
+// sont couvertes. Ajouter ici tout nom propre dont la prononciation TTS naturelle
+// n'est pas satisfaisante.
+const PRONUNCIATIONS = {
+  'Stormbringer': 'stormbringueur',
+  'Mournblade':   'mournblaide',
+};
+
 function fixSSMLElisions(ssml) {
   // 1) NFC : recompose les accents combinants (e + ́ → é précomposé)
   ssml = ssml.normalize('NFC');
@@ -1127,6 +1136,14 @@ function fixSSMLElisions(ssml) {
   ssml = ssml.replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1');
   ssml = ssml.replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1');
   ssml = ssml.replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1');
+
+  // 6) Prononciations personnalisées : substitue certains noms par leur
+  //    écriture phonétique française pour forcer la prononciation voulue.
+  //    La regex utilise \b pour matcher uniquement le mot complet, et le
+  //    flag i pour gérer toutes les casses (Stormbringer / stormbringer / STORMBRINGER).
+  for (const [name, phonetic] of Object.entries(PRONUNCIATIONS)) {
+    ssml = ssml.replace(new RegExp(`\\b${name}\\b`, 'gi'), phonetic);
+  }
 
   return ssml;
 }
