@@ -839,12 +839,30 @@ async function parseEpub(zip) {
     const fobj = zip.file(opfDir + href) || zip.file(href); if (!fobj) continue;
     const html  = await fobj.async('string');
     const doc   = new DOMParser().parseFromString(html, 'text/html');
-    const chTitle = doc.querySelector('h1,h2,h3')?.textContent?.trim() || `Chapitre ${chapters.length + 1}`;
+    const chTitle = extractChapterTitle(doc, chapters.length + 1);
     const text = extractText(doc.body).trim();
     if (text.length > 80) chapters.push({ title: chTitle, text });
   }
 
   return { title, author, coverUrl, chapters };
+}
+
+// Extrait un titre de chapitre lisible en combinant les premiers headings.
+// Stratégie : récupère jusqu'aux 3 premiers h1/h2/h3 du document, déduplique,
+// concatène avec " — " pour produire ex: "Chapitre 12 — QUAND TOUT N'EST...".
+function extractChapterTitle(doc, fallbackNum) {
+  const headings = [...doc.querySelectorAll('h1, h2, h3, h4')]
+    .slice(0, 3)
+    .map(h => h.textContent.replace(/\s+/g, ' ').trim())
+    .filter(t => t.length > 0 && t.length < 200);
+  // Déduplique en gardant l'ordre, et filtre les sous-chaînes redondantes
+  const unique = [];
+  for (const t of headings) {
+    if (unique.some(u => u === t || u.includes(t) || t.includes(u))) continue;
+    unique.push(t);
+  }
+  if (unique.length === 0) return `Chapitre ${fallbackNum}`;
+  return unique.join(' — ');
 }
 
 function extractText(node) {
