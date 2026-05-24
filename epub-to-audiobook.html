@@ -834,6 +834,13 @@ async function parseEpub(zip) {
   odoc.querySelectorAll('manifest item').forEach(it => { manifest[it.getAttribute('id')] = it.getAttribute('href'); });
 
   const chapters = [];
+  // Certains ePub utilisent des fichiers-séparateurs courts contenant juste
+  // "Chapitre N" (sans corps de texte), avec le sous-titre + contenu dans le
+  // fichier suivant. On accumule ces titres-préfixes pour les fusionner au
+  // prochain vrai chapitre.
+  const pendingTitlePrefix = [];
+  const TITLE_PAGE_PATTERN = /^\s*(chapitre|chapter|partie|tome|livre|book|part)\s+(\w+|[ivxlc]+|\d+)\s*$/i;
+
   for (const id of spineIds) {
     const href = manifest[id]; if (!href) continue;
     const fobj = zip.file(opfDir + href) || zip.file(href); if (!fobj) continue;
@@ -841,7 +848,21 @@ async function parseEpub(zip) {
     const doc   = new DOMParser().parseFromString(html, 'text/html');
     const chTitle = extractChapterTitle(doc, chapters.length + 1);
     const text = extractText(doc.body).trim();
-    if (text.length > 80) chapters.push({ title: chTitle, text });
+
+    if (text.length > 80) {
+      // Vrai chapitre avec contenu — préfixe avec les titres en attente
+      const fullTitle = pendingTitlePrefix.length > 0
+        ? [...pendingTitlePrefix, chTitle].join(' — ')
+        : chTitle;
+      chapters.push({ title: fullTitle, text });
+      pendingTitlePrefix.length = 0;
+    } else if (text.length > 0 && TITLE_PAGE_PATTERN.test(chTitle.split(' — ')[0])) {
+      // Fichier court ET dont le titre ressemble à "Chapitre N" → c'est une
+      // page de titre de chapitre, on accumule pour le prochain vrai chapitre.
+      pendingTitlePrefix.push(chTitle);
+    }
+    // Sinon : fichier court mais pas une page de titre de chapitre (peut être
+    // copyright, dédicace, etc.) — on le drop comme avant.
   }
 
   return { title, author, coverUrl, chapters };
