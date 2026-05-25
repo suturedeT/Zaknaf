@@ -1549,8 +1549,13 @@ RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
 - OBJECTIF : que la lecture semble continue, sans à-coups, sans silences entre segments
 
 Chaque bloc DOIT être encapsulé dans <speak>…</speak>.
-Retourne UNIQUEMENT un tableau JSON : [{"i":0,"ssml":"<speak>…</speak>"},…]
-Aucun texte autour, aucun markdown, aucune backtick.
+
+CONTRAINTE JSON CRITIQUE :
+- Retourne UNIQUEMENT un tableau JSON : [{"i":0,"ssml":"<speak>…</speak>"},…]
+- Aucun texte autour, aucun markdown, aucune backtick.
+- DANS LE TEXTE DU SSML, n'utilise JAMAIS de guillemets droits " (U+0022) car ils cassent le JSON wrapper. Utilise EXCLUSIVEMENT les guillemets français typographiques « » pour les dialogues et citations. Pour les attributs SSML eux-mêmes (rate, pitch, etc.), tu peux utiliser " mais sans guillemets imbriqués dans la valeur.
+- Pas de barre oblique inverse \\ dans le texte du SSML.
+- Pas de saut de ligne \\n dans les chaînes SSML.
 
 Blocs :
 ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
@@ -1577,7 +1582,27 @@ ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
     if (!raw) throw new Error(`Empty Claude response: ${JSON.stringify(data).slice(0,200)}`);
     const match = raw.match(/\[[\s\S]*\]/);
     if (!match) throw new Error(`No JSON in response: ${raw.slice(0,200)}`);
-    const arr = JSON.parse(match[0]);
+
+    // Parse robuste : si JSON.parse échoue (souvent à cause de " non échappés
+    // dans le SSML), on tente de récupérer chaque entrée individuellement via
+    // regex au lieu de tout perdre.
+    let arr;
+    try {
+      arr = JSON.parse(match[0]);
+    } catch (parseErr) {
+      console.warn('JSON.parse a échoué, tentative de récupération par regex…', parseErr.message);
+      arr = [];
+      // Extrait chaque bloc {"i":N,"ssml":"..."} avec une regex tolérante.
+      // Le ssml peut contenir n'importe quoi sauf "} qui clôt l'objet.
+      const re = /\{\s*"i"\s*:\s*(\d+)\s*,\s*"ssml"\s*:\s*"([\s\S]*?)"\s*\}/g;
+      let m;
+      while ((m = re.exec(match[0])) !== null) {
+        arr.push({ i: parseInt(m[1], 10), ssml: m[2] });
+      }
+      if (arr.length === 0) throw parseErr; // rien récupérable → fallback
+      console.log(`✓ Récupéré ${arr.length} SSML via regex tolérante`);
+    }
+
     return sentences.map((s, i) => {
       const found = arr.find(x => x.i === i);
       const ssml = found?.ssml || `<speak>${escapeXml(s)}</speak>`;
@@ -2210,7 +2235,12 @@ function injectChapters(mp4Buffer, chapters) {
 // UTILS
 // ─────────────────────────────────────────────────────────────────────────────
 function escapeXml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  return s
+    // Caractères de contrôle invalides en XML (gardent uniquement \t \n \r dans
+    // la plage 0-0x1F + retirer 0x7F-0x9F + U+FFFE/U+FFFF)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F￾￿]/g, '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
