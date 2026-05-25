@@ -1449,10 +1449,14 @@ function fixSSMLElisions(ssml) {
   // 5) Retire les <emphasis>, <prosody> et <lang>. Les deux premiers
   //    peuvent introduire des micro-pauses cassant les liaisons. <lang>
   //    forcerait une prononciation anglaise des noms propres — non désiré.
-  //    Le contenu textuel reste, seule la balise disparaît.
+  //    D'abord les paires bien fermées (on garde le contenu), puis on nettoie
+  //    les balises ORPHELINES (Claude génère parfois des </prosody> sans
+  //    <prosody> ouvrant, ce qui casse le XML envoyé à Google TTS).
   ssml = ssml.replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1');
   ssml = ssml.replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1');
   ssml = ssml.replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1');
+  // Nettoyage des balises orphelines (ouvrantes OU fermantes seules)
+  ssml = ssml.replace(/<\/?(emphasis|prosody|lang)(\s[^>]*)?>/g, '');
 
   // 6) Prononciations personnalisées : substitue certains noms par leur
   //    écriture phonétique française pour forcer la prononciation voulue.
