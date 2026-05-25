@@ -501,6 +501,14 @@ header {
           <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">Si désactivé : SSML simple, zéro appel API Anthropic (coût $0)</div>
         </div>
       </label>
+      <!-- Toggle traduction EN → FR via Claude -->
+      <label style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:10px 12px;background:var(--lift);border:1px solid var(--border);border-radius:8px;cursor:pointer">
+        <input type="checkbox" id="translateToggle" style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
+        <div style="flex:1">
+          <div style="font-size:13px;color:#fff">Traduire EN → FR via Claude</div>
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">Chapitre par chapitre avant le TTS. Coût Anthropic supplémentaire (~$2-5 par livre).</div>
+        </div>
+      </label>
     </div>
   </div>
 
@@ -767,6 +775,13 @@ function showStep2() {
   claudeToggle.checked = stored === null ? true : stored === '1';
   claudeToggle.onchange = () => {
     localStorage.setItem('epubson_use_claude', claudeToggle.checked ? '1' : '0');
+  };
+  // Restaure le toggle traduction (par défaut désactivé pour ne pas surprendre)
+  const trToggle = document.getElementById('translateToggle');
+  const trStored = localStorage.getItem('epubson_translate');
+  trToggle.checked = trStored === '1';
+  trToggle.onchange = () => {
+    localStorage.setItem('epubson_translate', trToggle.checked ? '1' : '0');
   };
   const dz = document.getElementById('dropzone');
   dz.style.display = 'block'; dz.classList.add('fade-in');
@@ -1234,12 +1249,30 @@ async function startConversion() {
     audioTimestampUs += (pcmF32.length * 1_000_000) / SR;
   }
 
+  // Traduction EN → FR activée ?
+  const useTranslation = document.getElementById('translateToggle')?.checked === true;
+
   // ── Boucle principale : chapitre par chapitre ─────────────────────────────
   for (let ci = 0; ci < totalChapters; ci++) {
     if (aborted) { onAbort(); return; }
     const ch = selectedChapters[ci];
     const gBase = ci / totalChapters;
     const gSlice = 1 / totalChapters;
+
+    // Phase optionnelle : traduction anglais → français du contenu
+    if (useTranslation) {
+      log(`🌍 Traduction EN→FR : ${ch.title}…`,'hi');
+      setPhaseDetail(0, `Traduction Ch.${ci+1}/${totalChapters}`);
+      try {
+        const translatedTitle = await translateText(ch.title);
+        const translatedText  = await translateText(ch.text);
+        ch.title = translatedTitle || ch.title;
+        ch.text  = translatedText  || ch.text;
+        log(`✓ Ch.${ci+1} traduit`,'ok');
+      } catch (e) {
+        log(`⚠ Traduction Ch.${ci+1} échouée : ${e.message} — on garde l'anglais`,'err');
+      }
+    }
 
     const sentences = segmentChapter(ch);
     const total = sentences.length;
@@ -1537,6 +1570,65 @@ function segmentChapter(ch) {
       result.push({ text: buf.trim(), gapMs: isLastPara ? 650 : sentenceGapMs(buf) });
   }
   return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLAUDE TRANSLATION (anglais → français)
+// ─────────────────────────────────────────────────────────────────────────────
+// Découpe le texte en chunks (par paragraphes) pour ne pas dépasser max_tokens,
+// traduit chaque chunk via Claude, puis recolle. Préserve les sauts de
+// paragraphe (\n\n) pour que segmentChapter fonctionne ensuite normalement.
+async function translateText(text) {
+  if (!text || text.trim().length === 0) return text;
+  const MAX_CHARS = 4000; // ~1000-1500 mots par appel, sous max_tokens
+
+  // Découpage par paragraphes pour préserver les frontières naturelles
+  const paragraphs = text.split(/\n{2,}/);
+  const chunks = [];
+  let buf = '';
+  for (const p of paragraphs) {
+    if (buf.length + p.length + 2 > MAX_CHARS && buf.length > 0) {
+      chunks.push(buf);
+      buf = p;
+    } else {
+      buf = buf ? buf + '\n\n' + p : p;
+    }
+  }
+  if (buf.length > 0) chunks.push(buf);
+
+  const translatedChunks = [];
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const prompt = `Traduis le texte anglais suivant en français littéraire, fluide et naturel.
+
+RÈGLES :
+- Préserve la structure des paragraphes (utilise \\n\\n entre paragraphes)
+- Conserve TOUS les noms propres (personnages, lieux) tels quels, sans les franciser ni les traduire
+- Préserve les guillemets français « » pour les dialogues
+- Ne traduis PAS les mots déjà en français qui se trouveraient dans le texte
+- Retourne UNIQUEMENT la traduction française, sans aucun commentaire, sans "Voici la traduction :" ni encadrement markdown
+
+Texte à traduire :
+${chunks[ci]}`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': claudeApiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 8000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${errBody.slice(0,200)}`);
+    }
+    const data = await resp.json();
+    const translated = data.content?.map(c => c.text || '').join('').trim() || '';
+    if (!translated) throw new Error('Réponse de traduction vide');
+    translatedChunks.push(translated);
+  }
+  return translatedChunks.join('\n\n');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
