@@ -506,7 +506,7 @@ header {
         <input type="checkbox" id="translateToggle" style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
         <div style="flex:1">
           <div style="font-size:13px;color:#fff">Traduire EN → FR via Claude</div>
-          <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">Chapitre par chapitre avant le TTS. Coût Anthropic supplémentaire (~$2-5 par livre).</div>
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">Via Claude Haiku 4.5 (économique). Coût ~$0.50-1 par roman selon longueur.</div>
         </div>
       </label>
     </div>
@@ -1573,23 +1573,22 @@ function segmentChapter(ch) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CLAUDE TRANSLATION (anglais → français)
+// CLAUDE TRANSLATION (anglais → français) — optimisée pour le coût
 // ─────────────────────────────────────────────────────────────────────────────
-// Découpe le texte en chunks (par paragraphes) pour ne pas dépasser max_tokens,
-// traduit chaque chunk via Claude, puis recolle. Préserve les sauts de
-// paragraphe (\n\n) pour que segmentChapter fonctionne ensuite normalement.
+// Optimisations vs version initiale (réduit le coût ~80%) :
+//   1. Modèle Haiku 4.5 (≈ 5× moins cher que Sonnet 4.6, qualité littéraire OK)
+//   2. Chunks larges (~9000 chars) → moins d'appels donc moins d'overhead prompt
+//   3. Prompt court (instructions condensées)
 async function translateText(text) {
   if (!text || text.trim().length === 0) return text;
-  const MAX_CHARS = 4000; // ~1000-1500 mots par appel, sous max_tokens
+  const MAX_CHARS = 9000;
 
-  // Découpage par paragraphes pour préserver les frontières naturelles
   const paragraphs = text.split(/\n{2,}/);
   const chunks = [];
   let buf = '';
   for (const p of paragraphs) {
     if (buf.length + p.length + 2 > MAX_CHARS && buf.length > 0) {
-      chunks.push(buf);
-      buf = p;
+      chunks.push(buf); buf = p;
     } else {
       buf = buf ? buf + '\n\n' + p : p;
     }
@@ -1598,24 +1597,17 @@ async function translateText(text) {
 
   const translatedChunks = [];
   for (let ci = 0; ci < chunks.length; ci++) {
-    const prompt = `Traduis le texte anglais suivant en français littéraire, fluide et naturel.
+    // Prompt minimal : 4 règles essentielles, pas de redondance
+    const prompt = `Traduis ce texte anglais en français littéraire. Garde les noms propres tels quels, utilise « » pour les dialogues, préserve les paragraphes avec \\n\\n, retourne UNIQUEMENT la traduction sans aucun préambule.
 
-RÈGLES :
-- Préserve la structure des paragraphes (utilise \\n\\n entre paragraphes)
-- Conserve TOUS les noms propres (personnages, lieux) tels quels, sans les franciser ni les traduire
-- Préserve les guillemets français « » pour les dialogues
-- Ne traduis PAS les mots déjà en français qui se trouveraient dans le texte
-- Retourne UNIQUEMENT la traduction française, sans aucun commentaire, sans "Voici la traduction :" ni encadrement markdown
-
-Texte à traduire :
 ${chunks[ci]}`;
 
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': claudeApiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 8000,
+        model: 'claude-haiku-4-5',  // 5× moins cher que Sonnet 4.6, qualité OK pour traduction
+        max_tokens: 16000,           // permet une output longue (français ~10-15% plus volumineux)
         messages: [{ role: 'user', content: prompt }]
       })
     });
