@@ -1600,22 +1600,30 @@ ${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
 
     // Parse robuste : si JSON.parse échoue (souvent à cause de " non échappés
     // dans le SSML), on tente de récupérer chaque entrée individuellement via
-    // regex au lieu de tout perdre.
+    // regex au lieu de tout perdre. CRITIQUE : on dé-échappe ensuite les
+    // séquences JSON sinon des \" littéraux passent dans le SSML envoyé à
+    // Google et invalident le XML.
     let arr;
     try {
       arr = JSON.parse(match[0]);
     } catch (parseErr) {
       console.warn('JSON.parse a échoué, tentative de récupération par regex…', parseErr.message);
       arr = [];
-      // Extrait chaque bloc {"i":N,"ssml":"..."} avec une regex tolérante.
-      // Le ssml peut contenir n'importe quoi sauf "} qui clôt l'objet.
       const re = /\{\s*"i"\s*:\s*(\d+)\s*,\s*"ssml"\s*:\s*"([\s\S]*?)"\s*\}/g;
+      const unescapeJsonStr = s => s
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\\//g, '/')
+        .replace(/\\n/g, ' ')
+        .replace(/\\r/g, '')
+        .replace(/\\t/g, ' ')
+        .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
       let m;
       while ((m = re.exec(match[0])) !== null) {
-        arr.push({ i: parseInt(m[1], 10), ssml: m[2] });
+        arr.push({ i: parseInt(m[1], 10), ssml: unescapeJsonStr(m[2]) });
       }
-      if (arr.length === 0) throw parseErr; // rien récupérable → fallback
-      console.log(`✓ Récupéré ${arr.length} SSML via regex tolérante`);
+      if (arr.length === 0) throw parseErr;
+      console.log(`✓ Récupéré ${arr.length} SSML via regex tolérante (dé-échappés)`);
     }
 
     return sentences.map((s, i) => {
