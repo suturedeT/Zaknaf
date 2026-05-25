@@ -1470,11 +1470,13 @@ function fixSSMLElisions(ssml) {
   ssml = ssml.replace(/<\/?(emphasis|prosody|lang)(\s[^>]*)?>/g, '');
 
   // 5b) <break> : doit TOUJOURS être auto-fermant (<break/>), JAMAIS de
-  //     paire <break>...</break>. Claude génère parfois des </break>
-  //     orphelins qui invalident le XML → 400 Google TTS. On normalise :
-  //       - </break> orphelins : supprimés
-  //       - <break ...> non auto-fermants : on ajoute le slash final
-  ssml = ssml.replace(/<\/break\s*>/gi, '');
+  //     paire <break>...</break>. Claude génère des variantes absurdes :
+  //       </break>                    → supprimer
+  //       </break time="100ms"/>      → supprimer (fermante avec attributs)
+  //       </break ...n'importe quoi>  → supprimer
+  //       <break time="100ms">        → ajouter / final
+  //     On normalise tout via une regex permissive sur la balise fermante.
+  ssml = ssml.replace(/<\/break\b[^>]*>/gi, '');
   ssml = ssml.replace(/<break(\s[^>]*?)?>/gi, (m, attrs) => {
     const a = attrs || '';
     return a.endsWith('/') ? m : `<break${a}/>`;
