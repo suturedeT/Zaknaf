@@ -1671,8 +1671,15 @@ async function googleTTS(ssml, retries = 3) {
         })
       });
       if (!resp.ok) {
-        const e = await resp.json();
-        throw new Error(e.error?.message || 'TTS error');
+        const errBody = await resp.text();
+        let errMsg = 'TTS error';
+        try { errMsg = JSON.parse(errBody).error?.message || errMsg; } catch(_) {}
+        // Log COMPLET : status + message + SSML problématique pour diagnostic
+        console.group(`%c[Google TTS ${resp.status}] ${errMsg}`, 'color:#fca5a5;font-weight:bold');
+        console.log('SSML envoyé :', inputSSML);
+        console.log('Réponse Google :', errBody);
+        console.groupEnd();
+        throw new Error(`${resp.status} ${errMsg}`);
       }
       const data  = await resp.json();
       const bytes = Uint8Array.from(atob(data.audioContent), c => c.charCodeAt(0));
