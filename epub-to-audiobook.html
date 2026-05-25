@@ -1417,8 +1417,19 @@ const PRONUNCIATIONS = {
 function fixSSMLElisions(ssml) {
   // 1) NFC : recompose les accents combinants (e + ́ → é précomposé)
   ssml = ssml.normalize('NFC');
-  // 2) Toutes les variantes d'apostrophe → ' TYPOGRAPHIQUE (U+2019)
-  ssml = ssml.replace(APOS_VARIANTS, APOS);
+  // 2) Normalise les apostrophes UNIQUEMENT dans le TEXTE hors balises XML.
+  //    Si on normalisait tout le SSML, les attributs comme <break time="100ms"/>
+  //    verraient leurs guillemets convertis en typographiques (« ») et l'XML
+  //    deviendrait invalide → Google rejette en 400.
+  ssml = ssml.replace(/<[^>]*>|[^<]+/g, seg =>
+    seg.startsWith('<') ? seg : seg.replace(APOS_VARIANTS, APOS)
+  );
+  // 2b) Dans les balises XML, force les guillemets d'attributs en ASCII " :
+  //     si Claude (ou ma normalisation passée) a laissé des typographiques
+  //     dans les attributs, on les convertit en guillemets droits.
+  ssml = ssml.replace(/<[^>]+>/g, tag =>
+    tag.replace(/=\s*[‘’‚‛]([^‘’‚‛<>]*)[‘’‚‛]/g, '="$1"')
+  );
   const ELI = 'l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd';
   // Plusieurs passes pour gérer les imbrications (ex: <p><emphasis>l'</emphasis>âme</p>)
   let prev, pass = 0;
