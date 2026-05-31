@@ -1495,14 +1495,16 @@ function fixSSMLElisions(ssml) {
     '$1$2'
   );
 
-  // 5) Retire les <emphasis>, <prosody> et <lang>. Les deux premiers
-  //    peuvent introduire des micro-pauses cassant les liaisons. <lang>
-  //    forcerait une prononciation anglaise des noms propres — non désiré.
-  //    D'abord les paires bien fermées (on garde le contenu), puis on nettoie
-  //    les balises ORPHELINES (Claude génère parfois des </prosody> sans
-  //    <prosody> ouvrant, ce qui casse le XML envoyé à Google TTS).
-  ssml = ssml.replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1');
-  ssml = ssml.replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1');
+  // 5) Gestion <prosody>/<emphasis>/<lang> :
+  //    - On GARDE les <prosody> qui wrappent une phrase entière (>= 40 chars
+  //      de contenu) → variation rythmique au niveau phrase, sans risque
+  //      d'introduire des micro-pauses dans les liaisons.
+  //    - On STRIP les <prosody>/<emphasis> au niveau MOT (< 40 chars de
+  //      contenu) → ces wrappers courts cassent les liaisons français.
+  //    - On STRIP TOUTES les <lang> (forçaient prononciation anglaise).
+  ssml = ssml.replace(/<(prosody|emphasis)([^>]*)>([\s\S]*?)<\/\1>/g,
+    (m, tag, attrs, content) => content.length >= 40 ? m : content
+  );
   ssml = ssml.replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1');
   // Nettoyage des balises orphelines (ouvrantes OU fermantes seules)
   ssml = ssml.replace(/<\/?(emphasis|prosody|lang)(\s[^>]*)?>/g, '');
@@ -1657,13 +1659,37 @@ RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
 - NE PAS ajouter de <break> après les points (le TTS insère déjà une pause, ajouter une pause = double silence)
 - Point-virgule / deux-points → <break time="150ms"/> UNIQUEMENT si la phrase est longue (>15 mots)
 - Tiret d'incise (— …) → <break time="100ms"/> avant et après
-- Guillemets de dialogue (« » ou —) : <prosody rate="97%"> légèrement ralenti pour distinguer la voix
-- Questions : dernier groupe montant <prosody pitch="+2st">
-- Exclamations fortes : <prosody rate="104%" pitch="+1st"> sur le groupe exclamatif
-- Mots importants : <emphasis level="moderate"> avec parcimonie (max 1-2 par bloc)
-- Descriptions d'ambiance : <prosody rate="95%"> très subtil
+
+— VARIATION DU RYTHME ET DE L'INTONATION (CRUCIAL pour éviter la monotonie) :
+  Chaque phrase doit avoir SON propre tempo et SA propre couleur tonale.
+  Utilise <prosody> UNIQUEMENT au niveau de la phrase ENTIÈRE (jamais sur des mots isolés),
+  en wrappant le contenu du <speak> selon le TYPE de phrase :
+
+  • Dialogue (commence par « ou —) :
+      <prosody rate="96%" pitch="+1st">…</prosody>   ← légèrement ralenti, voix portée
+  • Question (se termine par ?) :
+      <prosody rate="98%" pitch="+1st">…</prosody>   ← intonation montante naturelle
+  • Exclamation (se termine par !) :
+      <prosody rate="105%" pitch="+2st">…</prosody>  ← plus rapide, plus aigu
+  • Description / paysage (phrase évoquant ambiance, décor, métaphore) :
+      <prosody rate="94%" pitch="-1st">…</prosody>   ← ralenti, voix posée
+  • Action rapide (combat, course, urgence) :
+      <prosody rate="106%">…</prosody>               ← accéléré, tendu
+  • Réflexion intérieure / pensée du personnage :
+      <prosody rate="93%" pitch="-1st">…</prosody>   ← intimiste, plus lent
+  • Narration neutre (descriptif, transition) :
+      pas de <prosody>, laisse le débit naturel.
+
+  ALTERNANCE OBLIGATOIRE : deux phrases consécutives du même type doivent légèrement
+  varier (par exemple rate=96% puis rate=98% sur deux dialogues d'affilée) pour éviter
+  un effet "machine répétitive".
+
+- INTERDICTION FORMELLE : pas d'<emphasis> ni de <prosody> sur des MOTS ou des GROUPES
+  COURTS de moins de 40 caractères. Toute prosody/emphasis qui ne wrappe pas une phrase
+  entière sera ignorée par le post-traitement (et risque de casser les liaisons).
 - NOMS PROPRES : lis-les avec la prononciation française, JAMAIS avec une prononciation anglaise. N'utilise PAS la balise <lang xml:lang="en-GB"> ni aucune autre balise <lang>. Tous les noms propres sont lus tels qu'écrits en suivant la phonétique française.
-- OBJECTIF : que la lecture semble continue, sans à-coups, sans silences entre segments
+- OBJECTIF : lecture vivante, comme un narrateur professionnel qui module son débit
+  selon le contenu, sans à-coups internes aux phrases ni silences artificiels entre elles.
 
 Chaque bloc DOIT être encapsulé dans <speak>…</speak>.
 
