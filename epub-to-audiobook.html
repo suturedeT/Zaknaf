@@ -1445,6 +1445,11 @@ const PRONUNCIATIONS = {
   'D’aerthe':       'Dersse',
   'd’été':          'dété',
   'D’été':          'Dété',
+  // "d'œil" → "doeil" : Google TTS coupe sinon. Couvre les variantes œ/oe et casse.
+  'd’œil':          'doeil',
+  'D’œil':          'Doeil',
+  'd’oeil':         'doeil',
+  'D’oeil':         'Doeil',
 };
 
 function fixSSMLElisions(ssml) {
