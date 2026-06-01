@@ -1506,6 +1506,11 @@ function fixSSMLElisions(ssml) {
     (m, tag, attrs, content) => content.length >= 40 ? m : content
   );
   ssml = ssml.replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1');
+  // <say-as ...> : Claude le génère parfois par erreur autour d'un mot normal,
+  // ce qui fait que Google TTS épelle lettre par lettre ("é p é e" pour épée).
+  // On strippe systématiquement — pas d'usage légitime pour de la narration.
+  ssml = ssml.replace(/<say-as[^>]*>([\s\S]*?)<\/say-as>/g, '$1');
+  ssml = ssml.replace(/<\/?say-as[^>]*>/g, ''); // orphelins
   // Nettoyage des balises orphelines (ouvrantes OU fermantes seules)
   ssml = ssml.replace(/<\/?(emphasis|prosody|lang)(\s[^>]*)?>/g, '');
 
@@ -1698,6 +1703,9 @@ RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
 - INTERDICTION FORMELLE : pas d'<emphasis> ni de <prosody> sur des MOTS ou des GROUPES
   COURTS de moins de 40 caractères. Toute prosody/emphasis qui ne wrappe pas une phrase
   entière sera ignorée par le post-traitement (et risque de casser les liaisons).
+- N'utilise JAMAIS la balise <say-as>. Tous les mots doivent être lus normalement
+  comme du français standard. <say-as interpret-as="characters"> fait épeler
+  lettre par lettre (ex: "épée" lu "é-p-é-e") — totalement indésirable.
 - NOMS PROPRES : lis-les avec la prononciation française, JAMAIS avec une prononciation anglaise. N'utilise PAS la balise <lang xml:lang="en-GB"> ni aucune autre balise <lang>. Tous les noms propres sont lus tels qu'écrits en suivant la phonétique française.
 - OBJECTIF : lecture vivante, comme un narrateur professionnel qui module son débit
   selon le contenu, sans à-coups internes aux phrases ni silences artificiels entre elles.
