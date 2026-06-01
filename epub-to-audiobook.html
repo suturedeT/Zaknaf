@@ -1530,6 +1530,17 @@ function fixSSMLElisions(ssml) {
     ssml = ssml.replace(new RegExp(`\\b${name}\\b`, 'gi'), phonetic);
   }
 
+  // 7) RÈGLE GLOBALE : tout 'é' EN FIN DE MOT → 'er' (comme l'infinitif "penser").
+  //    S'applique UNIQUEMENT au texte hors balises pour ne pas casser les
+  //    attributs SSML. Google TTS lit "-er" comme infinitif (/e/ + r muet),
+  //    ce qui force la voyelle fermée /e/ sur tous les passés et adjectifs en é.
+  //    Exemples : "été" → "êter", "pensé" → "penser", "café" → "cafer".
+  ssml = ssml.replace(/<[^>]*>|[^<]+/g, seg =>
+    seg.startsWith('<') ? seg : seg
+      .replace(/é(?=[\s.,!?:;»…)\]\-—]|$)/g, 'er')
+      .replace(/É(?=[\s.,!?:;»…)\]\-—]|$)/g, 'Er')
+  );
+
   return ssml;
 }
 
