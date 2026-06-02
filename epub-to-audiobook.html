@@ -1574,15 +1574,27 @@ function fixSSMLElisions(ssml) {
   }
 
   // 7) RÈGLE GLOBALE : tout 'é' EN FIN DE MOT → 'er' (comme l'infinitif "penser").
-  //    S'applique UNIQUEMENT au texte hors balises pour ne pas casser les
-  //    attributs SSML. Google TTS lit "-er" comme infinitif (/e/ + r muet),
-  //    ce qui force la voyelle fermée /e/ sur tous les passés et adjectifs en é.
-  //    Exemples : "été" → "êter", "pensé" → "penser", "café" → "cafer".
-  ssml = ssml.replace(/<[^>]*>|[^<]+/g, seg =>
+  //    EXCEPTION : on PROTÈGE les blocs <phoneme>…</phoneme> car leur prononciation
+  //    est déjà fixée par l'attribut ph (ou par leur texte interne si Chirp3).
+  //    Sans cette protection, "été" inside <phoneme> devient "êter", ce qui :
+  //      - Neural2 : utilise ph donc OK, mais le texte affiché est bizarre
+  //      - Chirp3  : ne supporte pas <phoneme> → lit "êter" → /etɛʁ/ — BUG
+  const transformText = seg =>
     seg.startsWith('<') ? seg : seg
       .replace(/é(?=[\s.,!?:;»…)\]\-—]|$)/g, 'er')
-      .replace(/É(?=[\s.,!?:;»…)\]\-—]|$)/g, 'Er')
-  );
+      .replace(/É(?=[\s.,!?:;»…)\]\-—]|$)/g, 'Er');
+
+  const phonemeRe = /<phoneme[^>]*>[\s\S]*?<\/phoneme>/g;
+  let processed = '';
+  let lastIdx = 0;
+  let m;
+  while ((m = phonemeRe.exec(ssml)) !== null) {
+    processed += ssml.slice(lastIdx, m.index).replace(/<[^>]*>|[^<]+/g, transformText);
+    processed += m[0]; // bloc phoneme conservé tel quel
+    lastIdx = m.index + m[0].length;
+  }
+  processed += ssml.slice(lastIdx).replace(/<[^>]*>|[^<]+/g, transformText);
+  ssml = processed;
 
   return ssml;
 }
@@ -1837,7 +1849,10 @@ function sanitizeSSMLForChirp3(ssml) {
     .replace(/<say-as[^>]*>([\s\S]*?)<\/say-as>/g, '$1')
     // <sub alias="X">Y</sub> non supporté par Chirp3 → on garde l'alias (X) qui
     // est la forme concaténée sans apostrophe, garantissant la liaison.
-    .replace(/<sub\s+alias="([^"]*)"[^>]*>[\s\S]*?<\/sub>/g, '$1');
+    .replace(/<sub\s+alias="([^"]*)"[^>]*>[\s\S]*?<\/sub>/g, '$1')
+    // <phoneme> non supporté par Chirp3 → on garde le texte interne (qui est
+    // intact car protégé de l'étape 7 dans fixSSMLElisions).
+    .replace(/<phoneme[^>]*>([\s\S]*?)<\/phoneme>/g, '$1');
 }
 
 function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
