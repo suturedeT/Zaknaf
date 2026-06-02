@@ -1433,7 +1433,16 @@ const APOS = '’';  // ' typographique
 // Le mot original est matché en \b...\b case-insensitive, donc toutes les casses
 // sont couvertes. Ajouter ici tout nom propre dont la prononciation TTS naturelle
 // n'est pas satisfaisante.
+// Table des prononciations forcées. Deux formats d'entrée acceptés :
+//   1. STRING       : substitution textuelle simple (Google TTS lit le remplacement)
+//                     ex: 'Stormbringer' : 'stormbringueur'
+//   2. { ipa: '…' } : wrap dans <phoneme alphabet="ipa" ph="…">…</phoneme>
+//                     ex: 'épée' : { ipa: 'epe' }
+//                     Google TTS prononce EXACTEMENT l'IPA fourni, sans
+//                     dépendre de sa propre interprétation orthographique.
+//                     Utile pour les mots que Google épelle ou mal-articule.
 const PRONUNCIATIONS = {
+  // ── Substitutions textuelles ─────────────────────────────────────────────
   'Stormbringer':   'stormbringueur',
   'Mournblade':     'mournblaide',
   'Menzoberanzann': 'Menzoberannezanne',
@@ -1445,11 +1454,19 @@ const PRONUNCIATIONS = {
   'D’aerthe':       'Dersse',
   'd’été':          'dété',
   'D’été':          'Dété',
-  // "d'œil" → "doeil" : Google TTS coupe sinon. Couvre les variantes œ/oe et casse.
+  // "d'œil" → "doeil" : Google TTS coupe sinon. Couvre œ/oe et casse.
   'd’œil':          'doeil',
   'D’œil':          'Doeil',
   'd’oeil':         'doeil',
   'D’oeil':         'Doeil',
+
+  // ── Entrées IPA (prononciation phonétique exacte via <phoneme>) ──────────
+  'épée':           { ipa: 'epe' },
+  'Épée':           { ipa: 'epe' },
+  'épées':          { ipa: 'epe' },           // pluriel, s muet
+  'd’épée':         { ipa: 'depe' },
+  'l’épée':         { ipa: 'lepe' },
+  'l’épées':        { ipa: 'lepe' },
 };
 
 function fixSSMLElisions(ssml) {
@@ -1527,12 +1544,18 @@ function fixSSMLElisions(ssml) {
     return a.endsWith('/') ? m : `<break${a}/>`;
   });
 
-  // 6) Prononciations personnalisées : substitue certains noms par leur
-  //    écriture phonétique française pour forcer la prononciation voulue.
-  //    La regex utilise \b pour matcher uniquement le mot complet, et le
-  //    flag i pour gérer toutes les casses (Stormbringer / stormbringer / STORMBRINGER).
-  for (const [name, phonetic] of Object.entries(PRONUNCIATIONS)) {
-    ssml = ssml.replace(new RegExp(`\\b${name}\\b`, 'gi'), phonetic);
+  // 6) Prononciations personnalisées : deux formats supportés
+  //    - STRING       → substitution textuelle directe
+  //    - { ipa: '…' } → wrap dans <phoneme alphabet="ipa" ph="…">…</phoneme>
+  //    pour forcer Google TTS à prononcer exactement l'IPA fourni.
+  const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const [name, value] of Object.entries(PRONUNCIATIONS)) {
+    const re = new RegExp(`\\b${escapeRegex(name)}\\b`, 'gi');
+    if (typeof value === 'string') {
+      ssml = ssml.replace(re, value);
+    } else if (value && value.ipa) {
+      ssml = ssml.replace(re, m => `<phoneme alphabet="ipa" ph="${value.ipa}">${m}</phoneme>`);
+    }
   }
 
   // 7) RÈGLE GLOBALE : tout 'é' EN FIN DE MOT → 'er' (comme l'infinitif "penser").
