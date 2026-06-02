@@ -1452,8 +1452,6 @@ const PRONUNCIATIONS = {
   // Apostrophe typographique ' (U+2019) car les substitutions s'appliquent
   // APRÈS la normalisation d'apostrophe (étape 2 de fixSSMLElisions).
   'D’aerthe':       'Dersse',
-  'd’été':          'dété',
-  'D’été':          'Dété',
   // "d'œil" → "doeil" : Google TTS coupe sinon. Couvre œ/oe et casse.
   'd’œil':          'doeil',
   'D’œil':          'Doeil',
@@ -1467,6 +1465,19 @@ const PRONUNCIATIONS = {
   'd’épée':         { ipa: 'depe' },
   'l’épée':         { ipa: 'lepe' },
   'l’épées':        { ipa: 'lepe' },
+  // été : neutralise la règle globale "é final → er" pour ce mot spécifique
+  //   Sans ça : été → êter → Google lit /etɛʁ/ ("é-tère")
+  //   Avec phoneme : Google lit l'IPA "ete" → /ete/ (correct)
+  //   Variantes post-fusion d'élision ajoutées car step 4 transforme
+  //   "l'été" → "lété" et "d'été" → "dété" AVANT step 6.
+  'été':            { ipa: 'ete' },
+  'Été':            { ipa: 'ete' },
+  'étés':           { ipa: 'ete' },           // pluriel, s muet
+  'lété':           { ipa: 'lete' },          // post-fusion de l'été
+  'Lété':           { ipa: 'lete' },
+  'dété':           { ipa: 'dete' },          // post-fusion de d'été
+  'Dété':           { ipa: 'dete' },
+
   // Noms propres D&D (Salvatore)
   'Ellifain':       { ipa: 'elifɛn' },  // -ain prononcé /ɛn/ (è ouvert + n), pas nasalisé
   'Entreri':        { ipa: 'ɛntʁeʁi' },
