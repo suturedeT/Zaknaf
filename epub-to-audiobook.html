@@ -1478,13 +1478,15 @@ const PRONUNCIATIONS = {
   //   Avec phoneme : Google lit l'IPA "ete" → /ete/ (correct)
   //   Variantes post-fusion d'élision ajoutées car step 4 transforme
   //   "l'été" → "lété" et "d'été" → "dété" AVANT step 6.
-  'été':            { ipa: 'ete' },
-  'Été':            { ipa: 'ete' },
-  'étés':           { ipa: 'ete' },           // pluriel, s muet
-  'lété':           { ipa: 'lete' },          // post-fusion de l'été
-  'Lété':           { ipa: 'lete' },
-  'dété':           { ipa: 'dete' },          // post-fusion de d'été
-  'Dété':           { ipa: 'dete' },
+  'été':            { ipa: 'ete',  alt: 'été'  },
+  'Été':            { ipa: 'ete',  alt: 'Été'  },
+  'étés':           { ipa: 'ete',  alt: 'été'  },  // pluriel → singulier pour Chirp3
+  'détée':          { ipa: 'dete', alt: 'dété' },  // forme rare/typo, mappée sur dété
+  'Détée':          { ipa: 'dete', alt: 'Dété' },
+  'lété':           { ipa: 'lete', alt: 'lété' },  // post-fusion de l'été
+  'Lété':           { ipa: 'lete', alt: 'Lété' },
+  'dété':           { ipa: 'dete', alt: 'dété' },  // post-fusion de d'été
+  'Dété':           { ipa: 'dete', alt: 'Dété' },
 
   // Noms propres D&D (Salvatore)
   'Ellifain':       { ipa: 'elifɛn' },  // -ain prononcé /ɛn/ (è ouvert + n), pas nasalisé
