@@ -1434,13 +1434,16 @@ const APOS = '’';  // ' typographique
 // sont couvertes. Ajouter ici tout nom propre dont la prononciation TTS naturelle
 // n'est pas satisfaisante.
 // Table des prononciations forcées. Deux formats d'entrée acceptés :
-//   1. STRING       : substitution textuelle simple (Google TTS lit le remplacement)
+//   1. STRING       : substitution textuelle simple
 //                     ex: 'Stormbringer' : 'stormbringueur'
-//   2. { ipa: '…' } : wrap dans <phoneme alphabet="ipa" ph="…">…</phoneme>
-//                     ex: 'épée' : { ipa: 'epe' }
-//                     Google TTS prononce EXACTEMENT l'IPA fourni, sans
-//                     dépendre de sa propre interprétation orthographique.
-//                     Utile pour les mots que Google épelle ou mal-articule.
+//   2. { ipa, alt } : wrap dans <phoneme alphabet="ipa" ph="ipa">alt</phoneme>
+//                     ex: 'dépées' : { ipa: 'depe', alt: 'dépée' }
+//                     - Neural2/WaveNet : utilisent l'IPA via ph → /depe/
+//                     - Chirp3-HD       : ne supporte pas <phoneme>, le sanitizer
+//                                         strippe le tag → Google lit l'ALT (forme
+//                                         textuelle nettoyée, ici "dépée" sans s
+//                                         qui fait buguer Chirp3 sur le pluriel).
+//                     Si alt est omis, on utilise la chaîne matchée par défaut.
 const PRONUNCIATIONS = {
   // ── Substitutions textuelles ─────────────────────────────────────────────
   'Stormbringer':   'stormbringueur',
@@ -1458,17 +1461,18 @@ const PRONUNCIATIONS = {
   'd’oeil':         'doeil',
   'D’oeil':         'Doeil',
 
-  // ── Entrées IPA (prononciation phonétique exacte via <phoneme>) ──────────
-  // ATTENTION : mon étape 4 fusionne les élisions devant voyelles accentuées
-  // AVANT que step 6 ne tourne. Donc "l'épée" devient "lépée" et "d'épée"
-  // devient "dépée" avant la substitution. Il faut couvrir les formes
-  // POST-FUSION sinon les entrées avec apostrophe ne matchent jamais.
-  'épée':           { ipa: 'epe' },
-  'épées':          { ipa: 'epe' },           // pluriel, s muet
-  'lépée':          { ipa: 'lepe' },          // post-fusion de l'épée
-  'lépées':         { ipa: 'lepe' },          // post-fusion de l'épées
-  'dépée':          { ipa: 'depe' },          // post-fusion de d'épée
-  'dépées':         { ipa: 'depe' },          // post-fusion de d'épées
+  // ── Entrées IPA + ALT pour Chirp3 ────────────────────────────────────────
+  // Le pluriel '-ées' fait buguer Chirp3 (lecture lettre par lettre).
+  // Solution : alt='forme singulière sans s' → Chirp3 lit la forme propre.
+  // Pour Neural2/WaveNet, ph='IPA' reste prioritaire.
+  // Note : étape 4 fusionne "l'épée" → "lépée" et "d'épée" → "dépée" avant
+  // step 6, donc on cible les formes post-fusion.
+  'épée':           { ipa: 'epe',  alt: 'épée'  },
+  'épées':          { ipa: 'epe',  alt: 'épée'  },
+  'lépée':          { ipa: 'lepe', alt: 'lépée' },
+  'lépées':         { ipa: 'lepe', alt: 'lépée' },
+  'dépée':          { ipa: 'depe', alt: 'dépée' },
+  'dépées':         { ipa: 'depe', alt: 'dépée' },
   // été : neutralise la règle globale "é final → er" pour ce mot spécifique
   //   Sans ça : été → êter → Google lit /etɛʁ/ ("é-tère")
   //   Avec phoneme : Google lit l'IPA "ete" → /ete/ (correct)
@@ -1573,7 +1577,13 @@ function fixSSMLElisions(ssml) {
     if (typeof value === 'string') {
       ssml = ssml.replace(re, value);
     } else if (value && value.ipa) {
-      ssml = ssml.replace(re, m => `<phoneme alphabet="ipa" ph="${value.ipa}">${m}</phoneme>`);
+      // Texte interne du <phoneme> :
+      //   - 'alt' si fourni → texte lisible par Chirp3 après strip du tag
+      //     (ex: 'dépée' au lieu de 'dépées' qui fait buguer Chirp3)
+      //   - sinon le mot matché lui-même
+      ssml = ssml.replace(re, (m) =>
+        `<phoneme alphabet="ipa" ph="${value.ipa}">${value.alt || m}</phoneme>`
+      );
     }
   }
 
