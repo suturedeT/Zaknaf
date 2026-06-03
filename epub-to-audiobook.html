@@ -1575,7 +1575,15 @@ function fixSSMLElisions(ssml) {
   //    pour forcer Google TTS à prononcer exactement l'IPA fourni.
   const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   for (const [name, value] of Object.entries(PRONUNCIATIONS)) {
-    const re = new RegExp(`\\b${escapeRegex(name)}\\b`, 'gi');
+    // BUG : \b en JavaScript n'est PAS Unicode-aware → é/à/œ/etc. ne sont
+    // pas considérés comme word chars. Conséquence : \bX\b pour un mot
+    // finissant par 'é' (lété, été, dété…) n'avait jamais sa frontière
+    // de fin valide → substitution silencieusement ignorée. On remplace
+    // par lookbehind/lookahead Unicode-aware via \p{L}/\p{N}.
+    const re = new RegExp(
+      `(?<![\\p{L}\\p{N}])${escapeRegex(name)}(?![\\p{L}\\p{N}])`,
+      'giu'
+    );
     if (typeof value === 'string') {
       ssml = ssml.replace(re, value);
     } else if (value && value.ipa) {
@@ -1610,7 +1618,17 @@ function normalizeFrenchText(s) {
     //   Plus les zero-width (U+200B/C/D), word-joiner (U+2060), BOM (U+FEFF)
     .replace(/[­​‌‍⁠﻿]/g, '')
     // Resserre les apostrophes d'élision : "l ' homme" / "l' homme" → "l'homme"
-    .replace(new RegExp(`(\\p{L})\\s*${APOS}\\s*(\\p{L})`, 'gu'), `$1${APOS}$2`);
+    .replace(new RegExp(`(\\p{L})\\s*${APOS}\\s*(\\p{L})`, 'gu'), `$1${APOS}$2`)
+    // Strip émojis et symboles décoratifs : 🎯 ⭐ ❤️ etc. → rien.
+    // Couvre les blocs Unicode Emoji + Misc Symbols + Dingbats + Variation Selectors.
+    .replace(/[\u{1F300}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F000}-\u{1F2FF}]/gu, '')
+    // Strip émoticônes ASCII : :) :-D :( ;-) <3 etc.
+    .replace(/(?<![\p{L}\p{N}])(?:[:;=8][\-^o]?[)D(P\\\/3]|<3|XD|:'\(|:'\))(?![\p{L}\p{N}])/gu, '')
+    // Expansion "qu'" devant consonne (contraction informelle non standard) :
+    //   "qu'je suis" → "que je suis"  "qu'tu sais" → "que tu sais"
+    //   En français standard, qu' n'élide QUE devant voyelle. Devant consonne,
+    //   c'est un raccourci de langage parlé qui fait bafouiller le TTS.
+    .replace(new RegExp(`\\bqu${APOS}([bcdfghjklmnpqrstvwxz])`, 'gi'), 'que $1');
 }
 
 function segmentChapter(ch) {
