@@ -1433,20 +1433,19 @@ const APOS = '’';  // ' typographique
 // Le mot original est matché en \b...\b case-insensitive, donc toutes les casses
 // sont couvertes. Ajouter ici tout nom propre dont la prononciation TTS naturelle
 // n'est pas satisfaisante.
-// Table des prononciations forcées. Deux formats d'entrée acceptés :
-//   1. STRING       : substitution textuelle simple
-//                     ex: 'Stormbringer' : 'stormbringueur'
-//   2. { ipa, alt } : wrap dans <phoneme alphabet="ipa" ph="ipa">alt</phoneme>
-//                     ex: 'dépées' : { ipa: 'depe', alt: 'dépée' }
-//                     - Neural2/WaveNet : utilisent l'IPA via ph → /depe/
-//                     - Chirp3-HD       : ne supporte pas <phoneme>, le sanitizer
-//                                         strippe le tag → Google lit l'ALT (forme
-//                                         textuelle nettoyée, ici "dépée" sans s
-//                                         qui fait buguer Chirp3 sur le pluriel).
-//                     Si alt est omis, on utilise la chaîne matchée par défaut.
+// Table des prononciations forcées. TROIS formats d'entrée acceptés :
+//   1. STRING        : substitution textuelle simple
+//                      ex: 'Stormbringer' : 'stormbringueur'
+//   2. { ipa, alt }  : wrap dans <phoneme alphabet="ipa" ph="ipa">alt</phoneme>
+//                      Neural2/WaveNet utilisent IPA via ph. Chirp3 strippe et
+//                      lit l'alt.
+//   3. { lang, alt } : wrap dans <lang xml:lang="…">alt</lang> pour basculer
+//                      Google sur une autre langue (typiquement en-GB pour les
+//                      mots à prononcer à l'anglaise).
+//                      Chirp3 strippe le lang et lit l'alt (texte FR).
+//   Si alt est omis, on utilise la chaîne matchée d'origine.
 const PRONUNCIATIONS = {
   // ── Substitutions textuelles ─────────────────────────────────────────────
-  'Stormbringer':   'stormbringueur',
   'Mournblade':     'mournblaide',
   'Menzoberanzann': 'Menzoberannezanne',
   'Menzoberranzan': 'Menzoberannezanne',  // graphie canonique D&D (2 r, 1 z)
@@ -1492,6 +1491,16 @@ const PRONUNCIATIONS = {
   'Ellifain':       { ipa: 'elifɛn' },  // -ain prononcé /ɛn/ (è ouvert + n), pas nasalisé
   'Entreri':        { ipa: 'ɛntʁeʁi' },
   'Dwahvel':        { ipa: 'dwavɛl' },
+
+  // ── Entrées <lang> : prononciation dans une autre langue ─────────────────
+  // Stormbringer prononcé à l'anglaise. Sur Chirp3 (qui ne supporte pas <lang>),
+  // mon sanitizer strippe le tag et Google lit l'alt (qui est le mot tel quel)
+  // avec phonétique française — fallback acceptable.
+  'Stormbringer':   { lang: 'en-GB', alt: 'Stormbringer' },
+
+  // ── Verbes/mots avec élision avant voyelle accentuée (post-fusion) ───────
+  'léchapper':      { ipa: 'leʃape',  alt: 'léchapper'  },  // l'échapper → léchapper
+  'déchapper':      { ipa: 'deʃape',  alt: 'déchapper'  },  // d'échapper → déchapper
 };
 
 function fixSSMLElisions(ssml) {
@@ -1578,8 +1587,7 @@ function fixSSMLElisions(ssml) {
     // BUG : \b en JavaScript n'est PAS Unicode-aware → é/à/œ/etc. ne sont
     // pas considérés comme word chars. Conséquence : \bX\b pour un mot
     // finissant par 'é' (lété, été, dété…) n'avait jamais sa frontière
-    // de fin valide → substitution silencieusement ignorée. On remplace
-    // par lookbehind/lookahead Unicode-aware via \p{L}/\p{N}.
+    // de fin valide. On remplace par lookbehind/lookahead Unicode-aware.
     const re = new RegExp(
       `(?<![\\p{L}\\p{N}])${escapeRegex(name)}(?![\\p{L}\\p{N}])`,
       'giu'
@@ -1587,12 +1595,15 @@ function fixSSMLElisions(ssml) {
     if (typeof value === 'string') {
       ssml = ssml.replace(re, value);
     } else if (value && value.ipa) {
-      // Texte interne du <phoneme> :
-      //   - 'alt' si fourni → texte lisible par Chirp3 après strip du tag
-      //     (ex: 'dépée' au lieu de 'dépées' qui fait buguer Chirp3)
-      //   - sinon le mot matché lui-même
       ssml = ssml.replace(re, (m) =>
         `<phoneme alphabet="ipa" ph="${value.ipa}">${value.alt || m}</phoneme>`
+      );
+    } else if (value && value.lang) {
+      // Wrap dans <lang xml:lang="…"> pour basculer Google sur une autre langue
+      // (ex: en-GB pour prononcer "Stormbringer" comme un anglais).
+      // L'alt est le texte interne (lu par Chirp3 si le tag est strippé).
+      ssml = ssml.replace(re, (m) =>
+        `<lang xml:lang="${value.lang}">${value.alt || m}</lang>`
       );
     }
   }
