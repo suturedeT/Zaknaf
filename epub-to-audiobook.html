@@ -809,6 +809,17 @@ async function loadEpub(file) {
     const zip = await JSZip.loadAsync(file);
     const book = await parseEpub(zip);
     book.id = 'book_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+    // Fallback Internet si pas de cover dans l'ePub
+    if (!book.coverUrl) {
+      console.log(`[Cover] Pas de cover dans l'ePub pour "${book.title}" → recherche Internet…`);
+      const internetCover = await fetchCoverFromInternet(book.title, book.author);
+      if (internetCover) {
+        book.coverUrl = internetCover;
+        console.log(`[Cover] ✓ Trouvée sur Internet : ${internetCover}`);
+      } else {
+        console.log(`[Cover] ✗ Aucune cover trouvée pour "${book.title}"`);
+      }
+    }
     booksQueue.push(book);
     // Pour rétro-compatibilité avec startConversion qui lit chapters/bookMeta :
     bookMeta = book;
@@ -818,6 +829,46 @@ async function loadEpub(file) {
     console.error(e);
     alert(`Erreur de lecture de "${file.name}" : ${e.message}`);
   }
+}
+
+// Recherche d'une cover sur Internet à partir du titre + auteur.
+// Sources interrogées en cascade : Google Books API → Open Library.
+// Pas besoin de clé API pour ces deux services en mode lecture.
+async function fetchCoverFromInternet(title, author) {
+  // Google Books d'abord (meilleur catalogue francophone)
+  try {
+    const q = `intitle:${title}${author && author !== 'Auteur inconnu' ? ` inauthor:${author.split(/[,;&]/)[0].trim()}` : ''}`;
+    const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=3&printType=books`;
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const data = await resp.json();
+      for (const item of (data.items || [])) {
+        const links = item.volumeInfo?.imageLinks;
+        const thumb = links?.thumbnail || links?.smallThumbnail;
+        if (thumb) {
+          // Upgrade http→https, retire le edge=curl, zoom=1 (haute résolution)
+          return thumb.replace(/^http:/, 'https:').replace(/&edge=curl/, '').replace(/&zoom=\d/, '');
+        }
+      }
+    }
+  } catch (e) { console.warn('[Cover] Google Books error:', e); }
+
+  // Fallback Open Library
+  try {
+    const q = encodeURIComponent(title);
+    const url = `https://openlibrary.org/search.json?title=${q}&limit=3`;
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const data = await resp.json();
+      for (const doc of (data.docs || [])) {
+        if (doc.cover_i) {
+          return `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`;
+        }
+      }
+    }
+  } catch (e) { console.warn('[Cover] Open Library error:', e); }
+
+  return null;
 }
 
 // Rendu de la queue : une card par livre, chacune avec ses chapitres éditables
@@ -948,20 +999,46 @@ async function parseEpub(zip) {
   const title  = odoc.querySelector('metadata > *[*|name="title"],  dc\\:title,  title')?.textContent?.trim()  || 'Sans titre';
   const author = odoc.querySelector('metadata > *[*|name="creator"], dc\\:creator, creator')?.textContent?.trim() || 'Auteur inconnu';
 
-  // Cover image
+  // Cover image — détection en cascade selon les conventions ePub variées
   let coverUrl = null;
   try {
-    const coverItem = odoc.querySelector('manifest item[id="cover-image"], manifest item[properties="cover-image"]');
+    let coverItem = null;
+    // Stratégie 1 : EPUB 3 — manifest item avec properties="cover-image"
+    coverItem = odoc.querySelector('manifest item[properties~="cover-image"]');
+    // Stratégie 2 : <meta name="cover" content="ID_DU_MANIFEST"/> (EPUB 2)
+    if (!coverItem) {
+      const metaCover = odoc.querySelector('metadata > meta[name="cover"]');
+      const coverItemId = metaCover?.getAttribute('content');
+      if (coverItemId) {
+        coverItem = odoc.querySelector(`manifest item[id="${coverItemId}"]`);
+      }
+    }
+    // Stratégie 3 : id classiques (cover, cover-image, coverImage)
+    if (!coverItem) {
+      coverItem = odoc.querySelector('manifest item[id="cover-image"], manifest item[id="cover"], manifest item[id="coverImage"], manifest item[id="cover_image"]');
+    }
+    // Stratégie 4 : premier item image dont l'id ou href contient "cover"
+    if (!coverItem) {
+      const items = [...odoc.querySelectorAll('manifest item')];
+      coverItem = items.find(it => {
+        const id = (it.getAttribute('id') || '').toLowerCase();
+        const href = (it.getAttribute('href') || '').toLowerCase();
+        const mt = (it.getAttribute('media-type') || '').toLowerCase();
+        return mt.startsWith('image/') && (id.includes('cover') || href.includes('cover'));
+      });
+    }
+
     if (coverItem) {
       const href = coverItem.getAttribute('href');
+      const mediaType = coverItem.getAttribute('media-type') || 'image/jpeg';
       const imgFile = zip.file(opfDir + href) || zip.file(href);
       if (imgFile) {
         const bytes = await imgFile.async('uint8array');
-        const blob  = new Blob([bytes], { type: 'image/jpeg' });
+        const blob = new Blob([bytes], { type: mediaType });
         coverUrl = URL.createObjectURL(blob);
       }
     }
-  } catch(e) {}
+  } catch(e) { console.warn('[Cover] extraction ePub failed:', e); }
 
   const spineIds = [...odoc.querySelectorAll('spine itemref')].map(i => i.getAttribute('idref'));
   const manifest = {};
