@@ -1631,8 +1631,35 @@ function normalizeFrenchText(s) {
     .replace(new RegExp(`\\bqu${APOS}([bcdfghjklmnpqrstvwxz])`, 'gi'), 'que $1');
 }
 
+// Force-split d'une phrase trop longue aux ponctuations secondaires.
+// Google TTS rejette les "phrases" dépassant ~400 chars sans ponctuation
+// de fin reconnue. On découpe agressivement aux tirets d'incise, points-virgules,
+// deux-points, virgules — puis en dernier ressort aux frontières de mot.
+function forceSplitLongSentence(s, maxLen) {
+  const parts = [];
+  let remaining = s;
+  const seps = ['—', '–', '; ', ': ', ', '];
+  while (remaining.length > maxLen) {
+    let cutAt = -1;
+    for (const sep of seps) {
+      const idx = remaining.lastIndexOf(sep, maxLen);
+      if (idx > maxLen / 2) { cutAt = idx + sep.length; break; }
+    }
+    if (cutAt === -1) {
+      cutAt = remaining.lastIndexOf(' ', maxLen);
+      if (cutAt === -1) cutAt = maxLen; // dernier ressort : coupe brutale
+    }
+    parts.push(remaining.slice(0, cutAt).trim());
+    remaining = remaining.slice(cutAt).trim();
+  }
+  if (remaining.length > 0) parts.push(remaining);
+  return parts.filter(p => p.length > 3);
+}
+
 function segmentChapter(ch) {
   const result = [];
+  const MAX_LEN = 280;        // longueur cible par segment
+  const HARD_LIMIT = 380;     // au-delà : force-split
   const paragraphs = ch.text.split(/\n{2,}/).map(p => normalizeFrenchText(p.replace(/\s+/g,' ')).trim()).filter(p => p.length > 10);
   for (let pi = 0; pi < paragraphs.length; pi++) {
     const para = paragraphs[pi];
@@ -1644,11 +1671,17 @@ function segmentChapter(ch) {
     const raw = para.split(/(?<=[.!?»…])\s+/).map(s => s.trim()).filter(s => s.length > 3);
     let buf = '';
     for (let si = 0; si < raw.length; si++) {
-      const s = raw[si];
-      if ((buf+' '+s).trim().length > 280 && buf.length > 0) {
-        result.push({ text: buf.trim(), gapMs: sentenceGapMs(buf) });
-        buf = s;
-      } else { buf = buf ? buf+' '+s : s; }
+      // Si une "phrase" individuelle dépasse HARD_LIMIT (cas Google qui plante),
+      // on la pré-découpe aux ponctuations secondaires AVANT le buffer-mering.
+      const candidates = raw[si].length > HARD_LIMIT
+        ? forceSplitLongSentence(raw[si], HARD_LIMIT)
+        : [raw[si]];
+      for (const s of candidates) {
+        if ((buf+' '+s).trim().length > MAX_LEN && buf.length > 0) {
+          result.push({ text: buf.trim(), gapMs: sentenceGapMs(buf) });
+          buf = s;
+        } else { buf = buf ? buf+' '+s : s; }
+      }
     }
     if (buf.trim().length > 3)
       result.push({ text: buf.trim(), gapMs: isLastPara ? 650 : sentenceGapMs(buf) });
