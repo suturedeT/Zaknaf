@@ -1649,6 +1649,19 @@ const PRONUNCIATIONS = {
   // Neural2/WaveNet utilisent l'IPA via ph donc rien ne change pour eux.
   'léchapper':      { ipa: 'leʃape',  alt: 'l’échappée'  },
   'déchapper':      { ipa: 'deʃape',  alt: 'd’échappée'  },
+
+  // ── étui / étuit (cas du fourreau d'épée en fantasy) ─────────────────────
+  // Post-fusion : "l'étui" → "létui", "l'étuit" → "létuit".
+  // Prononciation /letɥi/ (le ɥ = "u" de "lui"). Alt = forme avec apostrophe
+  // pour aider Chirp3 (mot français réel qu'il connaît).
+  'létui':          { ipa: 'letɥi', alt: 'l’étui' },
+  'létuit':         { ipa: 'letɥi', alt: 'l’étui' },
+  'détui':          { ipa: 'detɥi', alt: 'd’étui' },
+  'détuit':         { ipa: 'detɥi', alt: 'd’étui' },
+  // Formes sans élision aussi (au cas où "étui" apparaît seul ou après autre mot)
+  'étui':           { ipa: 'etɥi',  alt: 'étui'    },
+  'étuit':          { ipa: 'etɥi',  alt: 'étui'    },
+  'étuis':          { ipa: 'etɥi',  alt: 'étui'    },
 };
 
 function fixSSMLElisions(ssml) {
