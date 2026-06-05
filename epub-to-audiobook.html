@@ -1446,7 +1446,6 @@ const APOS = '’';  // ' typographique
 //   Si alt est omis, on utilise la chaîne matchée d'origine.
 const PRONUNCIATIONS = {
   // ── Substitutions textuelles ─────────────────────────────────────────────
-  'Mournblade':     'mournblaide',
   'Menzoberanzann': 'Menzoberannezanne',
   'Menzoberranzan': 'Menzoberannezanne',  // graphie canonique D&D (2 r, 1 z)
   'Jarlaxle':       'jarlax',
@@ -1493,10 +1492,11 @@ const PRONUNCIATIONS = {
   'Dwahvel':        { ipa: 'dwavɛl' },
 
   // ── Entrées <lang> : prononciation dans une autre langue ─────────────────
-  // Stormbringer prononcé à l'anglaise. Sur Chirp3 (qui ne supporte pas <lang>),
-  // mon sanitizer strippe le tag et Google lit l'alt (qui est le mot tel quel)
-  // avec phonétique française — fallback acceptable.
+  // Noms d'épées Elric prononcés à l'anglaise. Sur Chirp3 (qui ne supporte
+  // pas <lang>), mon sanitizer strippe le tag et Google lit l'alt avec
+  // phonétique française — fallback acceptable.
   'Stormbringer':   { lang: 'en-GB', alt: 'Stormbringer' },
+  'Mournblade':     { lang: 'en-GB', alt: 'Mournblade'   },
 
   // ── Verbes/mots avec élision : revert de la fusion pour Chirp3 ───────────
   // Le step 4 fusionne "l'échapper" → "léchapper", mais Chirp3 ne sait pas
