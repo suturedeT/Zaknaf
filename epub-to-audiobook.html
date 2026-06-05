@@ -250,16 +250,15 @@ header {
 }
 .btn-sm:hover { color:var(--ink); border-color:var(--border-hi); }
 
-/* convert btn */
+/* convert btn — visibilité contrôlée par son parent #actionRow */
 #convertBtn {
-  display:none;
   width:100%; padding:16px;
   background:linear-gradient(135deg,var(--accent),var(--accent2));
   border:none; border-radius:10px;
   color:#fff; font-family:'DM Sans',sans-serif;
   font-weight:500; font-size:15px; cursor:pointer;
   box-shadow:0 0 32px rgba(168,85,247,0.3);
-  transition:all 0.2s; margin-bottom:16px;
+  transition:all 0.2s; margin-bottom:0;
 }
 
 #convertBtn:hover { opacity:0.9; box-shadow:0 0 44px rgba(168,85,247,0.45); }
@@ -2597,7 +2596,7 @@ function abortConversion() {
 
 function onAbort() {
   document.getElementById('abortBtn').style.display = 'none';
-  document.getElementById('convertBtn').style.display = 'block';
+  document.getElementById('actionRow').style.display = 'flex';
   log('✕ Conversion annulée par l\'utilisateur','err');
   updateGlobal(0, 'Annulé');
 }
