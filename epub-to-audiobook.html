@@ -1498,14 +1498,16 @@ const PRONUNCIATIONS = {
   'Stormbringer':   { lang: 'en-GB', alt: 'Stormbringer' },
   'Mournblade':     { lang: 'en-GB', alt: 'Mournblade'   },
 
-  // ── Verbes/mots avec élision : revert de la fusion pour Chirp3 ───────────
-  // Le step 4 fusionne "l'échapper" → "léchapper", mais Chirp3 ne sait pas
-  // lire "léchapper" (mot non standard) et le segmente "l-é-chapper".
-  // Solution : alt = forme ORIGINALE avec apostrophe → Chirp3 le lit en élision
-  // française native (fluide /leʃape/).
+  // ── Verbes avec élision : on aiguille Chirp3 vers un mot français RÉEL ───
+  // Chirp3 segmente "l'échapper" et "léchapper" parce que l'infinitif après
+  // élision crée une ambiguïté. Astuce : utiliser comme alt un mot RÉEL du
+  // français qui se prononce identiquement → Chirp3 le trouve dans son
+  // dictionnaire et le lit fluidement.
+  //   "l'échapper" /leʃape/ → alt = "l'échappée" (le nom féminin, /leʃape/)
+  //   "d'échapper" /deʃape/ → alt = "d'échappée" (idem avec d')
   // Neural2/WaveNet utilisent l'IPA via ph donc rien ne change pour eux.
-  'léchapper':      { ipa: 'leʃape',  alt: 'l’échapper'  },  // ← apostrophe restaurée
-  'déchapper':      { ipa: 'deʃape',  alt: 'd’échapper'  },
+  'léchapper':      { ipa: 'leʃape',  alt: 'l’échappée'  },
+  'déchapper':      { ipa: 'deʃape',  alt: 'd’échappée'  },
 };
 
 function fixSSMLElisions(ssml) {
