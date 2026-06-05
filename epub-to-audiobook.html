@@ -515,37 +515,24 @@ header {
   <!-- Step 2: ePub drop -->
   <div id="dropzone">
     <span class="dz-icon">📖</span>
-    <div class="dz-title">Déposer votre fichier ePub</div>
-    <div class="dz-sub">ou cliquer pour parcourir — .epub uniquement</div>
-    <input type="file" id="fileInput" accept=".epub">
+    <div class="dz-title">Déposer votre/vos fichier(s) ePub</div>
+    <div class="dz-sub">ou cliquer pour parcourir — plusieurs fichiers acceptés</div>
+    <input type="file" id="fileInput" accept=".epub" multiple>
   </div>
 
-  <!-- Book preview & chapter selection -->
-  <div id="bookPreview">
-    <div class="book-cover" id="bookCover">📚</div>
-    <div class="book-details">
-      <div class="book-name" id="bookName">—</div>
-      <div class="book-author" id="bookAuthorEl">—</div>
-      <div class="book-stats">
-        <div class="stat"><strong id="statChapters">0</strong> chapitres</div>
-        <div class="stat"><strong id="statWords">0</strong> mots</div>
-        <div class="stat">~<strong id="statDuration">0</strong> min estimées</div>
-      </div>
-      <div style="margin-top:12px">
-        <div style="font-size:11px;color:var(--ink-dim);margin-bottom:6px;letter-spacing:0.04em">CHAPITRES À INCLURE</div>
-        <div class="sel-row">
-          <button class="btn-sm" onclick="selectAll(true)">Tout sélectionner</button>
-          <button class="btn-sm" onclick="selectAll(false)">Tout désélectionner</button>
-        </div>
-        <div class="chapter-list" id="chapterList"></div>
-      </div>
-    </div>
-  </div>
+  <!-- Container dynamique pour les livres en queue (1 card par livre) -->
+  <div id="booksQueue"></div>
 
-  <!-- Convert button -->
-  <button id="convertBtn" onclick="startConversion()">
-    🎙 Lancer la conversion en livre audio
-  </button>
+  <!-- Boutons d'action quand au moins un livre est chargé -->
+  <div id="actionRow" style="display:none;flex-direction:column;gap:8px;margin-bottom:16px">
+    <button id="addMoreBtn" onclick="document.getElementById('fileInput').click()"
+            style="background:var(--lift);border:1px solid var(--border);color:var(--ink);padding:10px 14px;border-radius:8px;cursor:pointer;font-size:13px">
+      ➕ Ajouter un autre ePub à la queue
+    </button>
+    <button id="convertBtn" onclick="startConversion()">
+      🎙 Lancer la conversion (<span id="queueCount">0</span> livre<span id="queuePlural"></span>)
+    </button>
+  </div>
 
   <!-- Abort -->
   <button id="abortBtn" onclick="abortConversion()">✕ Annuler la conversion</button>
@@ -719,6 +706,9 @@ let gcpApiKey    = localStorage.getItem('epubson_gcp') || '';
 let claudeApiKey = localStorage.getItem('epubson_claude') || '';
 let selectedVoice = localStorage.getItem('epubson_voice') || 'fr-FR-Neural2-C';
 let chapters = [], bookMeta = {};
+// Queue de livres pour la conversion multi-ePubs. Chaque entrée :
+//   { id, title, author, coverUrl, chapters: [{title, text}] }
+let booksQueue = [];
 let aborted = false;
 let allAudioBuffers = [];   // AudioBuffer[]
 let audioCtx = null;
@@ -797,22 +787,151 @@ function setupDrop() {
   dz.addEventListener('click', () => fi.click());
   dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
   dz.addEventListener('dragleave', () => dz.classList.remove('over'));
-  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); loadEpub(e.dataTransfer.files[0]); });
-  fi.addEventListener('change', e => loadEpub(e.target.files[0]));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('over');
+    loadMultipleEpubs([...e.dataTransfer.files]);
+  });
+  fi.addEventListener('change', e => loadMultipleEpubs([...e.target.files]));
+}
+
+async function loadMultipleEpubs(files) {
+  const validFiles = files.filter(f => f && f.name.endsWith('.epub'));
+  if (validFiles.length === 0) { alert('Au moins un fichier .epub est requis.'); return; }
+  for (const file of validFiles) {
+    await loadEpub(file);
+  }
+  // Reset l'input pour permettre de re-sélectionner les mêmes fichiers
+  document.getElementById('fileInput').value = '';
 }
 
 async function loadEpub(file) {
-  if (!file || !file.name.endsWith('.epub')) { alert('Fichier ePub requis.'); return; }
   try {
     const zip = await JSZip.loadAsync(file);
     const book = await parseEpub(zip);
+    book.id = 'book_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+    booksQueue.push(book);
+    // Pour rétro-compatibilité avec startConversion qui lit chapters/bookMeta :
     bookMeta = book;
     chapters = book.chapters;
-    showBookPreview(book);
+    renderBooksQueue();
   } catch(e) {
     console.error(e);
-    alert('Erreur de lecture du fichier ePub : ' + e.message);
+    alert(`Erreur de lecture de "${file.name}" : ${e.message}`);
   }
+}
+
+// Rendu de la queue : une card par livre, chacune avec ses chapitres éditables
+function renderBooksQueue() {
+  const container = document.getElementById('booksQueue');
+  container.innerHTML = '';
+  booksQueue.forEach((book, bi) => {
+    const totalWords = book.chapters.reduce((a,c) => a + c.text.split(/\s+/).length, 0);
+    const estMin = Math.round(totalWords / 130);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.cssText = 'margin-bottom:12px';
+    card.dataset.bookIdx = bi;
+    card.innerHTML = `
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        <div class="book-cover" style="width:48px;height:64px;font-size:20px">${book.coverUrl ? `<img src="${book.coverUrl}">` : '📚'}</div>
+        <div style="flex:1;min-width:0">
+          <div class="book-name" style="font-size:15px">${book.title}</div>
+          <div class="book-author">${book.author}</div>
+          <div class="book-stats" style="margin-top:6px">
+            <div class="stat"><strong>${book.chapters.length}</strong> ch.</div>
+            <div class="stat"><strong>${totalWords.toLocaleString('fr')}</strong> mots</div>
+            <div class="stat">~<strong>${estMin}</strong> min</div>
+          </div>
+        </div>
+        <button onclick="removeBookFromQueue(${bi})" style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:4px 8px" title="Retirer ce livre">✕</button>
+      </div>
+      <div style="margin-top:10px">
+        <div style="font-size:11px;color:var(--ink-dim);margin-bottom:6px">CHAPITRES (clic pour éditer le titre, ↑↓ pour réordonner)</div>
+        <div class="sel-row">
+          <button class="btn-sm" onclick="selectAllInBook(${bi}, true)">Tout sélectionner</button>
+          <button class="btn-sm" onclick="selectAllInBook(${bi}, false)">Tout désélectionner</button>
+        </div>
+        <div class="chapter-list" id="chapterList_${bi}"></div>
+      </div>
+    `;
+    container.appendChild(card);
+    renderChapterListForBook(bi);
+  });
+  // Bouton et compteur d'actions
+  const row = document.getElementById('actionRow');
+  if (booksQueue.length > 0) {
+    row.style.display = 'flex';
+    document.getElementById('queueCount').textContent = booksQueue.length;
+    document.getElementById('queuePlural').textContent = booksQueue.length > 1 ? 's' : '';
+  } else {
+    row.style.display = 'none';
+  }
+}
+
+function removeBookFromQueue(bi) {
+  booksQueue.splice(bi, 1);
+  renderBooksQueue();
+}
+
+function selectAllInBook(bi, val) {
+  document.querySelectorAll(`#chapterList_${bi} input[type=checkbox]`).forEach(cb => cb.checked = val);
+}
+
+// Rendu des chapitres pour UN livre spécifique (avec flèches ↑↓ et édition titre)
+function renderChapterListForBook(bi) {
+  const list = document.getElementById(`chapterList_${bi}`);
+  if (!list) return;
+  const book = booksQueue[bi];
+  // Capture l'état des cases actuelles (par index)
+  const prevChecked = new Map();
+  list.querySelectorAll('.ch-item').forEach((el, i) => {
+    const cb = el.querySelector('input[type=checkbox]');
+    if (cb) prevChecked.set(i, cb.checked);
+  });
+  list.innerHTML = '';
+  book.chapters.forEach((ch, i) => {
+    const wc = ch.text.split(/\s+/).length;
+    const isChecked = prevChecked.has(i) ? prevChecked.get(i) : true;
+    const el = document.createElement('div');
+    el.className = 'ch-item';
+    el.innerHTML = `
+      <input type="checkbox" id="ch_${bi}_${i}" ${isChecked?'checked':''}>
+      <span class="ch-item-name" data-bi="${bi}" data-i="${i}" title="Cliquer pour renommer" style="cursor:pointer;flex:1">${ch.title}</span>
+      <span class="ch-item-words" style="margin-right:8px">${wc.toLocaleString('fr')} mots</span>
+      <button class="ch-move" data-bi="${bi}" data-dir="up"   data-i="${i}" ${i===0?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↑</button>
+      <button class="ch-move" data-bi="${bi}" data-dir="down" data-i="${i}" ${i===book.chapters.length-1?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↓</button>`;
+    list.appendChild(el);
+  });
+  list.querySelectorAll('.ch-move').forEach(btn => {
+    btn.onclick = e => {
+      e.preventDefault();
+      const i = parseInt(btn.dataset.i, 10);
+      const j = btn.dataset.dir === 'up' ? i-1 : i+1;
+      if (j < 0 || j >= book.chapters.length) return;
+      [book.chapters[i], book.chapters[j]] = [book.chapters[j], book.chapters[i]];
+      renderChapterListForBook(bi);
+    };
+  });
+  list.querySelectorAll('.ch-item-name').forEach(span => {
+    span.onclick = () => {
+      const i = parseInt(span.dataset.i, 10);
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = book.chapters[i].title;
+      input.style.cssText = 'flex:1;background:var(--lift);border:1px solid var(--accent);border-radius:4px;color:#fff;padding:2px 6px;font-size:13px;font-family:inherit';
+      span.replaceWith(input);
+      input.focus(); input.select();
+      const commit = () => {
+        book.chapters[i].title = input.value.trim() || book.chapters[i].title;
+        renderChapterListForBook(bi);
+      };
+      input.onblur = commit;
+      input.onkeydown = e => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') renderChapterListForBook(bi);
+      };
+    };
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1093,128 +1212,67 @@ function extractText(node) {
 // ─────────────────────────────────────────────────────────────────────────────
 // BOOK PREVIEW
 // ─────────────────────────────────────────────────────────────────────────────
-function showBookPreview(book) {
-  document.getElementById('bookName').textContent   = book.title;
-  document.getElementById('bookAuthorEl').textContent = book.author;
+// showBookPreview / renderChapterList obsolètes : remplacés par renderBooksQueue
+// et renderChapterListForBook (multi-livre).
 
-  if (book.coverUrl) {
-    const img = document.createElement('img');
-    img.src = book.coverUrl;
-    const cover = document.getElementById('bookCover');
-    cover.innerHTML = '';
-    cover.appendChild(img);
-  }
-
-  const totalWords = book.chapters.reduce((a,c) => a + c.text.split(/\s+/).length, 0);
-  const estMin     = Math.round(totalWords / 130); // ~130 mots/min narration
-  document.getElementById('statChapters').textContent = book.chapters.length;
-  document.getElementById('statWords').textContent    = totalWords.toLocaleString('fr');
-  document.getElementById('statDuration').textContent = estMin;
-
-  renderChapterList();
-
-  const prev = document.getElementById('bookPreview');
-  prev.style.display = 'flex'; prev.classList.add('fade-in');
-  const btn = document.getElementById('convertBtn');
-  btn.style.display = 'block'; btn.classList.add('fade-in');
-}
-
-// Rendu de la liste des chapitres : flèches ↑↓ pour réordonner, titre éditable
-// au clic, case à cocher pour exclure. Conserve l'état des cases entre les
-// re-rendus en lisant l'état actuel du DOM avant de tout reconstruire.
-function renderChapterList() {
-  const list = document.getElementById('chapterList');
-  // Capture l'état actuel des cases (par titre+texte pour résister au reorder)
-  const prevChecked = new Map();
-  list.querySelectorAll('.ch-item').forEach((el, i) => {
-    const cb = el.querySelector('input[type=checkbox]');
-    if (cb) prevChecked.set(i, cb.checked);
-  });
-  list.innerHTML = '';
-  chapters.forEach((ch, i) => {
-    const wc = ch.text.split(/\s+/).length;
-    const isChecked = prevChecked.has(i) ? prevChecked.get(i) : true;
-    const el = document.createElement('div');
-    el.className = 'ch-item';
-    el.innerHTML = `
-      <input type="checkbox" id="ch${i}" ${isChecked?'checked':''}>
-      <span class="ch-item-name" data-i="${i}" title="Cliquer pour renommer" style="cursor:pointer;flex:1">${ch.title}</span>
-      <span class="ch-item-words" style="margin-right:8px">${wc.toLocaleString('fr')} mots</span>
-      <button class="ch-move" data-dir="up"   data-i="${i}" ${i===0?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↑</button>
-      <button class="ch-move" data-dir="down" data-i="${i}" ${i===chapters.length-1?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↓</button>`;
-    list.appendChild(el);
-  });
-  // Handlers flèches : permute deux entrées et re-rend
-  list.querySelectorAll('.ch-move').forEach(btn => {
-    btn.onclick = (e) => {
-      e.preventDefault();
-      const i = parseInt(btn.dataset.i, 10);
-      const dir = btn.dataset.dir;
-      const j = dir === 'up' ? i - 1 : i + 1;
-      if (j < 0 || j >= chapters.length) return;
-      [chapters[i], chapters[j]] = [chapters[j], chapters[i]];
-      renderChapterList();
-    };
-  });
-  // Handler édition de titre : remplace le span par un input
-  list.querySelectorAll('.ch-item-name').forEach(span => {
-    span.onclick = () => {
-      const i = parseInt(span.dataset.i, 10);
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = chapters[i].title;
-      input.style.cssText = 'flex:1;background:var(--lift);border:1px solid var(--accent);border-radius:4px;color:#fff;padding:2px 6px;font-size:13px;font-family:inherit';
-      span.replaceWith(input);
-      input.focus();
-      input.select();
-      const commit = () => {
-        chapters[i].title = input.value.trim() || chapters[i].title;
-        renderChapterList();
-      };
-      input.onblur = commit;
-      input.onkeydown = (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); commit(); }
-        if (e.key === 'Escape') { renderChapterList(); }
-      };
-    };
-  });
-}
-
-function selectAll(val) {
-  document.querySelectorAll('#chapterList input[type=checkbox]').forEach(cb => cb.checked = val);
-}
+// renderChapterList et selectAll (single-book) → remplacés par
+// renderChapterListForBook et selectAllInBook ci-dessus (multi-livre).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONVERSION
 // ─────────────────────────────────────────────────────────────────────────────
 async function startConversion() {
-  const selectedChapters = chapters.filter((_, i) => {
-    const cb = document.getElementById(`ch${i}`);
-    return cb && cb.checked;
-  });
-  if (selectedChapters.length === 0) { alert('Sélectionnez au moins un chapitre.'); return; }
+  if (booksQueue.length === 0) { alert('Aucun ePub dans la queue.'); return; }
+
+  // Collecte les chapitres sélectionnés par livre AVANT toute mise à jour DOM
+  const booksToProcess = booksQueue.map((book, bi) => ({
+    book,
+    bi,
+    selectedChapters: book.chapters.filter((_, i) => {
+      const cb = document.getElementById(`ch_${bi}_${i}`);
+      return cb && cb.checked;
+    }),
+  })).filter(b => b.selectedChapters.length > 0);
+
+  if (booksToProcess.length === 0) {
+    alert('Sélectionnez au moins un chapitre dans au moins un livre.');
+    return;
+  }
 
   aborted = false;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('convertBtn').style.display = 'none';
+  document.getElementById('actionRow').style.display = 'none';
   document.getElementById('abortBtn').style.display = 'block';
   document.getElementById('progressPanel').style.display = 'block';
   document.getElementById('progressPanel').classList.add('fade-in');
 
+  if (!('AudioEncoder' in window)) {
+    alert('Ton navigateur ne supporte pas WebCodecs. Utilise Chrome/Edge récent ou Safari 17+.');
+    return;
+  }
+
   const BATCH = 8, CONCURRENCY = 4, SILENCE = 0.003, SR = 44100;
+  const allResults = []; // un { url, title, sizeMB, durMin, ext } par livre
+  let grandTotalSentences = 0;
+
+  // ──────── BOUCLE EXTERNE : un livre par itération ──────────────────
+  for (let bookIdx = 0; bookIdx < booksToProcess.length; bookIdx++) {
+    if (aborted) { onAbort(); return; }
+    const { book, selectedChapters } = booksToProcess[bookIdx];
+
+    log(`📚 Livre ${bookIdx+1}/${booksToProcess.length} : ${book.title}`,'hi');
+
+    // Pour compatibilité avec les fonctions qui lisent bookMeta global
+    bookMeta = book;
+    chapters = book.chapters;
+
   const totalChapters = selectedChapters.length;
   let totalSentences = 0, totalSamples = 0;
   // Tracking des chapitres pour la piste de chapitres M4B
   const chapterMarks = [];
   let elapsedMs = 0;
 
-  // ── Encodeur AAC unique pour TOUT le livre (WebCodecs API) ─────────────────
-  // AAC est le codec attendu par iTunes/Apple Music/Apple Books dans un M4B.
-  // Le MP3-in-MP4 est techniquement valide mais iTunes ne l'accepte pas.
-  if (!('AudioEncoder' in window)) {
-    alert('Ton navigateur ne supporte pas WebCodecs (AudioEncoder). Utilise Chrome/Edge récent ou Safari 17+.');
-    return;
-  }
+  // ── Encodeur AAC UNIQUE par livre (réinitialisé à chaque itération) ──────
   const aacFrames = []; // chaque entrée = Uint8Array d'une trame AAC complète
   const aacEncoder = new AudioEncoder({
     output: (chunk) => {
@@ -1376,22 +1434,28 @@ async function startConversion() {
   await aacEncoder.flush();
   aacEncoder.close();
 
-  // ── Finalisation M4B (livre audio AAC avec chapitres navigables) ─────────
-  updateGlobal(0.99,'Finalisation M4B…');
+  // ── Finalisation M4B pour CE livre (un par itération externe) ────────────
+  updateGlobal(0.99 * ((bookIdx+1)/booksToProcess.length), `Finalisation M4B livre ${bookIdx+1}…`);
 
   log(`📦 Construction M4B AAC (${chapterMarks.length} chapitres, ${aacFrames.length} trames)…`,'hi');
-  await sleep(0); // yield au navigateur avant la phase synchrone
-  const m4bParts = buildM4B(aacFrames, chapterMarks, bookMeta.title, bookMeta.author, SR);
+  await sleep(0);
+  const m4bParts = buildM4B(aacFrames, chapterMarks, book.title, book.author, SR);
   const m4bBlob  = new Blob(m4bParts, { type:'audio/mp4' });
   const url      = URL.createObjectURL(m4bBlob);
   const sizeMB   = (m4bBlob.size/1024/1024).toFixed(1);
   const durMin   = Math.round(elapsedMs/60000);
 
-  updateGlobal(1,'Terminé !');
-  log(`✓ M4B prêt — ${sizeMB} Mo (~${durMin} min) — ${chapterMarks.length} chapitres`,'ok');
+  log(`✓ Livre ${bookIdx+1}/${booksToProcess.length} prêt — ${sizeMB} Mo (~${durMin} min)`,'ok');
+  allResults.push({ url, title: book.title, sizeMB, durMin, ext:'m4b' });
+  grandTotalSentences += totalSentences;
+  } // fin de la boucle externe sur les livres
 
+  updateGlobal(1, `Terminé ! ${allResults.length} livre${allResults.length>1?'s':''}`);
   document.getElementById('abortBtn').style.display = 'none';
-  showResult([{ url, title: bookMeta.title, sizeMB, durMin, ext:'m4b' }], bookMeta.title, totalSentences);
+  const overallTitle = allResults.length === 1
+    ? allResults[0].title
+    : `${allResults.length} livres audio`;
+  showResult(allResults, overallTitle, grandTotalSentences);
 }
 
 function sentenceGapMs(text) {
