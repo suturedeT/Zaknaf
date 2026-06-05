@@ -709,6 +709,55 @@ let chapters = [], bookMeta = {};
 //   { id, title, author, coverUrl, chapters: [{title, text}] }
 let booksQueue = [];
 let aborted = false;
+// Wake Lock pour empêcher la mise en veille pendant la conversion
+let wakeLock = null;
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) {
+    console.log('[WakeLock] Non supporté par ce navigateur');
+    return false;
+  }
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    console.log('[WakeLock] ✓ Acquis — l\'écran restera allumé');
+    // Si le wake lock est libéré (perte de focus, etc.), on tente de le reprendre
+    wakeLock.addEventListener('release', () => {
+      console.log('[WakeLock] Libéré');
+      wakeLock = null;
+    });
+    // Re-acquisition automatique au retour de visibilité
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && !wakeLock && !aborted) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+          console.log('[WakeLock] Re-acquis après retour de visibilité');
+        } catch(e) { console.warn('[WakeLock] Re-acquisition échouée:', e); }
+      }
+    });
+    return true;
+  } catch(e) {
+    console.warn('[WakeLock] Échec:', e);
+    return false;
+  }
+}
+async function releaseWakeLock() {
+  if (wakeLock) {
+    try { await wakeLock.release(); } catch(_) {}
+    wakeLock = null;
+    console.log('[WakeLock] Relâché');
+  }
+}
+
+// Attend le retour du réseau (utile après reprise de veille)
+function waitForOnline() {
+  return new Promise(resolve => {
+    if (navigator.onLine) return resolve();
+    log('⏳ Hors-ligne, attente du retour du réseau…','hi');
+    window.addEventListener('online', () => {
+      log('✓ Réseau rétabli, reprise…','ok');
+      resolve();
+    }, { once: true });
+  });
+}
 let allAudioBuffers = [];   // AudioBuffer[]
 let audioCtx = null;
 
@@ -1322,6 +1371,14 @@ async function startConversion() {
   document.getElementById('progressPanel').style.display = 'block';
   document.getElementById('progressPanel').classList.add('fade-in');
 
+  // Empêche la mise en veille pendant la conversion (Chrome/Edge)
+  const wakeLockOk = await acquireWakeLock();
+  if (wakeLockOk) {
+    log('🔒 Mise en veille empêchée pendant la conversion','ok');
+  } else {
+    log('⚠ Wake Lock indisponible — laisse l\'onglet visible pour éviter la veille','err');
+  }
+
   if (!('AudioEncoder' in window)) {
     alert('Ton navigateur ne supporte pas WebCodecs. Utilise Chrome/Edge récent ou Safari 17+.');
     return;
@@ -1528,6 +1585,7 @@ async function startConversion() {
 
   updateGlobal(1, `Terminé ! ${allResults.length} livre${allResults.length>1?'s':''}`);
   document.getElementById('abortBtn').style.display = 'none';
+  await releaseWakeLock();
   const overallTitle = allResults.length === 1
     ? allResults[0].title
     : `${allResults.length} livres audio`;
@@ -2076,7 +2134,7 @@ function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
 let __ssmlDebugCount = 0;
 const SSML_DEBUG_MAX = 10;
 
-async function googleTTS(ssml, retries = 3) {
+async function googleTTS(ssml, retries = 12) {
   const chirp3 = isChirp3(selectedVoice);
   const inputSSML = chirp3 ? sanitizeSSMLForChirp3(ssml) : ssml;
 
@@ -2117,15 +2175,25 @@ async function googleTTS(ssml, retries = 3) {
         console.log('SSML envoyé :', inputSSML);
         console.log('Réponse Google :', errBody);
         console.groupEnd();
-        throw new Error(`${resp.status} ${errMsg}`);
+        const err = new Error(`${resp.status} ${errMsg}`);
+        err.status = resp.status;
+        throw err;
       }
       const data  = await resp.json();
       const bytes = Uint8Array.from(atob(data.audioContent), c => c.charCodeAt(0));
       return bytes.buffer;
     } catch(e) {
+      if (aborted) throw new Error('Aborted');
+      // 4xx (sauf 429 rate-limit) = SSML invalide → ne PAS réessayer, throw direct
+      const is4xxFatal = e.status && e.status >= 400 && e.status < 500 && e.status !== 429;
+      if (is4xxFatal) throw e;
       if (attempt === retries - 1) throw e;
-      log(`⚠ Retry ${attempt+1} — ${e.message}`,'err');
-      await sleep(1000 * (attempt + 1));
+      // Backoff exponentiel : 1s, 2s, 4s, 8s, 16s, 30s max
+      const wait = Math.min(1000 * Math.pow(2, attempt), 30000);
+      log(`⚠ Retry ${attempt+1}/${retries} dans ${(wait/1000).toFixed(0)}s — ${e.message}`,'err');
+      await sleep(wait);
+      // Attend que le réseau soit revenu avant de tenter à nouveau
+      await waitForOnline();
     }
   }
 }
@@ -2599,6 +2667,7 @@ function onAbort() {
   document.getElementById('actionRow').style.display = 'flex';
   log('✕ Conversion annulée par l\'utilisateur','err');
   updateGlobal(0, 'Annulé');
+  releaseWakeLock();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
