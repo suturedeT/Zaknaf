@@ -492,26 +492,6 @@ header {
     <div id="voicePicker" style="display:none;margin-top:16px">
       <div style="font-size:12px;color:var(--ink-dim);margin-bottom:8px;letter-spacing:0.04em">Choisir la voix de narration</div>
       <div class="voice-grid" id="voiceGrid"></div>
-      <!-- Voix multiples pour différenciation dialogues -->
-      <details style="margin-top:14px;padding:10px 12px;background:var(--lift);border:1px solid var(--border);border-radius:8px">
-        <summary style="cursor:pointer;font-size:13px;color:#fff">🎭 Voix multiples (différencier dialogues)</summary>
-        <div style="font-size:11px;color:var(--ink-dim);margin-top:8px;margin-bottom:10px">
-          Détection automatique des dialogues + genre via heuristique (dit-il/elle, demanda-t-il/elle…).
-          Laisser vide pour utiliser la voix principale partout.
-        </div>
-        <div style="margin-bottom:8px">
-          <div style="font-size:12px;color:var(--ink-dim);margin-bottom:4px">Voix dialogues HOMME</div>
-          <select id="voiceMale" style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
-            <option value="">— Désactivé (utilise voix principale) —</option>
-          </select>
-        </div>
-        <div>
-          <div style="font-size:12px;color:var(--ink-dim);margin-bottom:4px">Voix dialogues FEMME</div>
-          <select id="voiceFemale" style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
-            <option value="">— Désactivé (utilise voix principale) —</option>
-          </select>
-        </div>
-      </details>
       <!-- Toggle SSML enrichi via Claude -->
       <label style="display:flex;align-items:center;gap:10px;margin-top:16px;padding:10px 12px;background:var(--lift);border:1px solid var(--border);border-radius:8px;cursor:pointer">
         <input type="checkbox" id="claudeToggle" checked style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
@@ -787,7 +767,6 @@ let audioCtx = null;
 document.getElementById('gcpKey').value    = gcpApiKey;
 document.getElementById('claudeKey').value = claudeApiKey;
 buildVoiceGrid();
-buildDialogueVoiceSelects();
 if (gcpApiKey && claudeApiKey) showStep2();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -800,34 +779,9 @@ function buildVoiceGrid() {
     const d = document.createElement('div');
     d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
     d.innerHTML = `<div class="vc-name">${v.label} <span class="tag ${v.type}">${v.type === 'n2' ? 'Neural2' : 'WaveNet'}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
-    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); buildDialogueVoiceSelects(); };
+    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); };
     grid.appendChild(d);
   });
-}
-
-// Remplit les selects "voix dialogues homme/femme" en filtrant les voix
-// de la MÊME famille que la voix principale (cohérence du rendu audio).
-function buildDialogueVoiceSelects() {
-  const mainType = VOICES.find(v => v.name === selectedVoice)?.type;
-  const compatibleVoices = VOICES.filter(v => v.type === mainType && v.name !== selectedVoice);
-  for (const sex of ['Male', 'Female']) {
-    const select = document.getElementById('voice' + sex);
-    if (!select) continue;
-    const stored = localStorage.getItem('epubson_voice_' + sex.toLowerCase());
-    // Garde l'option vide (désactivé)
-    select.innerHTML = '<option value="">— Désactivé (utilise voix principale) —</option>';
-    const wantedGen = sex === 'Male' ? 'Homme' : 'Femme';
-    for (const v of compatibleVoices) {
-      if (v.gen === wantedGen) {
-        const opt = document.createElement('option');
-        opt.value = v.name;
-        opt.textContent = `${v.label} — ${v.desc}`;
-        if (stored === v.name) opt.selected = true;
-        select.appendChild(opt);
-      }
-    }
-    select.onchange = () => localStorage.setItem('epubson_voice_' + sex.toLowerCase(), select.value);
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1528,57 +1482,6 @@ async function startConversion() {
     totalSentences += total;
     const ssmlMap = {}, mp3Map = {};
 
-    // ── PASSE SÉQUENTIELLE PRE-TTS : assigne voix narrateur/dialogue ──────
-    // Détecte le genre du locuteur pour chaque phrase et MAINTIENT un état
-    // "dernier locuteur connu" entre phrases. Crucial pour les em-dashes
-    // sans attribution explicite ("— Bonjour." sur une ligne) qui reprennent
-    // le speaker précédent.
-    {
-      const maleVoice = localStorage.getItem('epubson_voice_male') || selectedVoice;
-      const femaleVoice = localStorage.getItem('epubson_voice_female') || selectedVoice;
-      const multiVoice = (maleVoice !== selectedVoice) || (femaleVoice !== selectedVoice);
-      if (multiVoice) {
-        let lastGender = null;  // 'male' / 'female' / null
-        let voiceStats = { narrator: 0, male: 0, female: 0, split: 0 };
-        for (let i = 0; i < total; i++) {
-          const s = sentences[i];
-          // 1. Tentative de split intra-phrase
-          const pieces = splitSentenceByVoice(s.text, selectedVoice, maleVoice, femaleVoice);
-          if (pieces && pieces.length > 1) {
-            s.pieces = pieces;
-            voiceStats.split++;
-            // Met à jour lastGender selon le dernier dialogue détecté
-            for (const p of pieces) {
-              if (p.voice === maleVoice) lastGender = 'male';
-              else if (p.voice === femaleVoice) lastGender = 'female';
-            }
-            continue;
-          }
-          // 2. Phrase mono-pièce : détecte le genre
-          let gender = detectSpeakerGender(s.text);
-          // 3. Em-dash sans attribution → hérite du dernier locuteur
-          const isEmDashDialogue = /^[\s]*[—–][\s]/.test(s.text);
-          if (!gender && isEmDashDialogue && lastGender) {
-            gender = lastGender;
-          }
-          if (gender === 'male') {
-            s.voice = maleVoice;
-            voiceStats.male++;
-            lastGender = 'male';
-          } else if (gender === 'female') {
-            s.voice = femaleVoice;
-            voiceStats.female++;
-            lastGender = 'female';
-          } else {
-            voiceStats.narrator++;
-            // Reset lastGender quand on revient à de la narration pure (pas em-dash)
-            if (!isEmDashDialogue && !/[«»—]/.test(s.text)) lastGender = null;
-          }
-        }
-        console.log(`[Multi-voix Ch.${ci+1}] narrateur=${voiceStats.narrator}, homme=${voiceStats.male}, femme=${voiceStats.female}, splits=${voiceStats.split} sur ${total} phrases`);
-      }
-    }
-
     log(`📖 Ch.${ci+1}/${totalChapters} : ${ch.title} (${total} phrases)`,'hi');
 
     // Phase 0 : SSML
@@ -1603,19 +1506,8 @@ async function startConversion() {
       if (aborted) { onAbort(); return; }
       const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
       await Promise.all(slice.map(async idx => {
-        const sentence = sentences[idx];
-        // Voix pré-calculées dans la passe séquentielle pre-TTS ci-dessous
-        if (sentence.pieces && sentence.pieces.length > 1) {
-          const audioBuffers = [];
-          for (const piece of sentence.pieces) {
-            const pieceSsml = `<speak>${fixSSMLElisions(escapeXml(piece.text))}</speak>`;
-            audioBuffers.push(await googleTTS(pieceSsml, 12, piece.voice));
-          }
-          mp3Map[idx] = audioBuffers;
-        } else {
-          const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentence.text)}</speak>`;
-          mp3Map[idx] = await googleTTS(ssml, 12, sentence.voice || null);
-        }
+        const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
+        mp3Map[idx] = await googleTTS(ssml);
         ttsDone++;
         setPhaseBar(1, ttsDone/total*100);
         setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
@@ -1627,38 +1519,21 @@ async function startConversion() {
     // Phase 2 : Décodage + trim — libère mp3Map immédiatement
     setPhase(2,'active');
     const chPcmSegs = [];
-    // Helper : décode + trim + fade un buffer MP3 → Float32Array PCM
-    async function decodeAndTrim(mp3Buf) {
-      const decoded = await audioCtx.decodeAudioData(mp3Buf);
-      const raw = decoded.getChannelData(0), sr = decoded.sampleRate;
-      let s = 0; while (s < raw.length && Math.abs(raw[s]) < SILENCE) s++;
-      let e = raw.length-1; while (e > s && Math.abs(raw[e]) < SILENCE) e--;
-      e = Math.min(e + Math.floor(sr*0.025), raw.length-1);
-      if (e-s < sr*0.02) return null;
-      const t = raw.slice(s, e+1);
-      const fade = Math.min(Math.floor(sr*0.005), Math.floor(t.length/2));
-      for (let f = 0; f < fade; f++) { const g=f/fade; t[f]*=g; t[t.length-1-f]*=g; }
-      return t;
-    }
     for (let i = 0; i < total; i++) {
       if (aborted) { onAbort(); return; }
       if (!mp3Map[i]) continue;
       try {
-        const gapMs = sentences[i]?.gapMs ?? 450;
-        if (Array.isArray(mp3Map[i])) {
-          // Phrase splittée en plusieurs voix → décode chaque piece, push
-          // séparément avec 0 gap entre (gapMs sur la DERNIÈRE seulement)
-          const buffers = mp3Map[i];
-          mp3Map[i] = null;
-          for (let p = 0; p < buffers.length; p++) {
-            const pcm = await decodeAndTrim(buffers[p]);
-            if (pcm) chPcmSegs.push({ pcm, gapMs: (p === buffers.length - 1) ? gapMs : 50 });
-          }
-        } else {
-          const pcm = await decodeAndTrim(mp3Map[i]);
-          mp3Map[i] = null;
-          if (pcm) chPcmSegs.push({ pcm, gapMs });
-        }
+        const decoded = await audioCtx.decodeAudioData(mp3Map[i]);
+        mp3Map[i] = null;
+        const raw = decoded.getChannelData(0), sr = decoded.sampleRate;
+        let s = 0; while (s < raw.length && Math.abs(raw[s]) < SILENCE) s++;
+        let e = raw.length-1; while (e > s && Math.abs(raw[e]) < SILENCE) e--;
+        e = Math.min(e + Math.floor(sr*0.025), raw.length-1);
+        if (e-s < sr*0.02) continue;
+        const t = raw.slice(s, e+1);
+        const fade = Math.min(Math.floor(sr*0.005), Math.floor(t.length/2));
+        for (let f = 0; f < fade; f++) { const g=f/fade; t[f]*=g; t[t.length-1-f]*=g; }
+        chPcmSegs.push({ pcm: t, gapMs: sentences[i]?.gapMs ?? 450 });
       } catch(err) { log(`⚠ Segment ${i} ignoré`,'err'); }
       if (i%20===0) { setPhaseBar(2, i/total*100); updateGlobal(gBase+gSlice*(0.70+i/total*0.20), `Ch.${ci+1} décodage`); await sleep(0); }
     }
@@ -2353,155 +2228,8 @@ function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
 let __ssmlDebugCount = 0;
 const SSML_DEBUG_MAX = 10;
 
-// Liste exhaustive des verbes de dialogue français (incise narrative).
-// Couvre le registre courant (dit, répondit), littéraire (rétorqua, persifla)
-// et émotionnel (hurla, gémit, soupira, etc.).
-const DIALOGUE_VERBS = [
-  'dit','demanda','répondit','répliqua','rétorqua','riposta','reprit','ajouta',
-  'déclara','continua','conclut','admit','annonça','raconta','précisa',
-  'commenta','observa','expliqua','ordonna','enjoignit','enchaîna','débuta',
-  'débita','intervint','objecta','confessa','avoua','prononça','énonça','déclama',
-  's\'écria','s\'exclama','s\'enquit','s\'esclaffa','s\'étonna','s\'emporta',
-  'murmura','chuchota','soupira','grogna','grommela','maugréa','marmonna','marmotta',
-  'cria','hurla','vociféra','beugla','brama','tonna','rugit','glapit','mugit',
-  'lança','fit','songea','pensa','médita','rêva',
-  'interrogea','interpella','demanda','interrompit','insista','protesta',
-  'persifla','railla','ironisa',
-  'lâcha','glissa','pesta','jura',
-  'gémit','geignit','larmoya','sanglota','renifla',
-  'balbutia','bredouilla','bafouilla','bégaya','hésita',
-  'supplia','implora','conjura','prudait',
-  'ricana','rit','sourit','gloussa',
-  'rappela','remarqua','reconnut','accusa','approuva','acquiesça','renchérit',
-];
-const VERBS_REGEX = '(?:' + DIALOGUE_VERBS.map(v => v.replace(/'/g, "[’']")).join('|') + ')';
-
-// Détecte la PRÉSENCE de dialogue dans le texte (« », —, ou verbe d'attribution)
-function hasDialogue(text) {
-  return /[«»]|^—|\s—\s|\s—$/.test(text);
-}
-
-// Détection du genre du locuteur via heuristique française.
-// Renvoie 'male', 'female', ou null (= narration / inconnu).
-function detectSpeakerGender(text) {
-  const lower = text.toLowerCase();
-  if (!hasDialogue(text)) return null;
-  // Patterns -t-il/-il/il, et idem féminin
-  const mascRe = new RegExp('\\b' + VERBS_REGEX + '(?:-t)?-ils?\\b|\\b(?:il|ils)\\s+' + VERBS_REGEX + '\\b', 'gi');
-  const femRe  = new RegExp('\\b' + VERBS_REGEX + '(?:-t)?-elles?\\b|\\b(?:elle|elles)\\s+' + VERBS_REGEX + '\\b', 'gi');
-  const masc = (lower.match(mascRe) || []).length;
-  const fem  = (lower.match(femRe) || []).length;
-  if (masc > fem) return 'male';
-  if (fem > masc) return 'female';
-  return null;
-}
-
-// Détecte une INCISE D'ATTRIBUTION (", dit-elle,", ", rétorqua-t-il,", etc.)
-// dans un fragment de texte et retourne {start, end, gender} ou null.
-// Cherche au minimum : ponctuation + verbe + pronom inversé
-function findInciseAttribution(text) {
-  // Pattern : (virgule|tiret) + verbe + (-t-)? + il/elle + (suite optionnelle)
-  // Capture aussi des compléments : "dit-il en souriant," etc.
-  const inciseRe = new RegExp(
-    '([,;\\-—\\s]+)' +                                  // ponctuation/séparateur
-    '(?:' + VERBS_REGEX + '(?:-t)?-(?:ils?|elles?)' +   // verbe-(t)-il/elle
-        '|(?:il|ils|elle|elles)\\s+' + VERBS_REGEX + ')' + // ou il/elle + verbe
-    '(?:[^.!?,;«»—]*?)' +                                // complément (lieu, manière)
-    '(?=[,;\\-—.!?»]|$)',                                // jusqu'à prochaine ponct ou fin
-    'gi'
-  );
-  const match = inciseRe.exec(text);
-  if (!match) return null;
-  const lower = match[0].toLowerCase();
-  let gender = null;
-  if (/\b(?:il|ils|-il|-ils)\b/.test(lower)) gender = 'male';
-  else if (/\b(?:elle|elles|-elle|-elles)\b/.test(lower)) gender = 'female';
-  return { start: match.index, end: match.index + match[0].length, gender };
-}
-
-// Détermine le genre du locuteur d'un dialogue selon l'attribution autour.
-function detectDialogueGender(dialogueText, contextBefore, contextAfter) {
-  // 1. Chercher attribution DANS le dialogue (« X, dit-elle, Y »)
-  const inside = findInciseAttribution(dialogueText);
-  if (inside?.gender) return inside.gender;
-  // 2. Chercher attribution JUSTE APRÈS le dialogue (« X », dit-elle.)
-  const after = findInciseAttribution(contextAfter.slice(0, 100));
-  if (after?.gender) return after.gender;
-  // 3. Chercher dans le contexte AVANT (rare : "Marc dit : « X »")
-  const before = findInciseAttribution(contextBefore.slice(-100));
-  if (before?.gender) return before.gender;
-  return null;
-}
-
-// Découpe une phrase en pièces avec voix associées.
-//   - texte HORS dialogue → voix narrateur
-//   - texte DANS dialogue « ... » → voix locuteur (male/female), avec
-//     possibilité de couper l'incise interne "dit-elle" en narrateur au milieu
-//   - texte après un — (em-dash, début de phrase) → idem (dialogue oral)
-// Retourne [{text, voice}] ou null si pas de split utile.
-function splitSentenceByVoice(text, narratorVoice, maleVoice, femaleVoice) {
-  const pieces = [];
-
-  // CAS 1 : sentence avec « » — peut contenir une incise interne
-  if (/«[^»]*»/.test(text)) {
-    let lastEnd = 0;
-    const dialogueRe = /«([^»]*?)»/g;
-    let match;
-    while ((match = dialogueRe.exec(text)) !== null) {
-      // Avant le dialogue → narrateur
-      const before = text.slice(lastEnd, match.index);
-      if (before.trim().length > 0) pieces.push({ text: before, voice: narratorVoice });
-
-      const inner = match[1];  // contenu entre « et »
-      const contextBefore = text.slice(Math.max(0, match.index - 200), match.index);
-      const contextAfter  = text.slice(match.index + match[0].length, Math.min(text.length, match.index + match[0].length + 200));
-      const gender = detectDialogueGender(inner, contextBefore, contextAfter);
-      const dialogueVoice = (gender === 'male') ? maleVoice : (gender === 'female') ? femaleVoice : narratorVoice;
-
-      // Cherche une INCISE INTERNE au dialogue (",dit-elle,")
-      const innerIncise = findInciseAttribution(inner);
-      if (innerIncise && innerIncise.gender) {
-        // Split le dialogue en 3 : dialogue-avant, narrateur (incise), dialogue-après
-        const dialogueBefore = inner.slice(0, innerIncise.start);
-        const inciseText = inner.slice(innerIncise.start, innerIncise.end);
-        const dialogueAfter = inner.slice(innerIncise.end);
-        if (dialogueBefore.trim().length > 0) pieces.push({ text: '« ' + dialogueBefore + ' »', voice: dialogueVoice });
-        pieces.push({ text: inciseText, voice: narratorVoice });
-        if (dialogueAfter.trim().length > 0) pieces.push({ text: '« ' + dialogueAfter + ' »', voice: dialogueVoice });
-      } else {
-        // Pas d'incise interne : tout le « » en voix dialogue
-        pieces.push({ text: match[0], voice: dialogueVoice });
-      }
-      lastEnd = match.index + match[0].length;
-    }
-    const rest = text.slice(lastEnd);
-    if (rest.trim().length > 0) pieces.push({ text: rest, voice: narratorVoice });
-    return pieces.length > 1 ? pieces : null;
-  }
-
-  // CAS 2 : sentence commençant par — (em-dash, dialogue oral)
-  const emDashMatch = text.match(/^[\s]*[—–-][\s]/);
-  if (emDashMatch) {
-    // Chercher l'attribution dans la phrase
-    const incise = findInciseAttribution(text);
-    if (incise) {
-      const dialogueVoice = (incise.gender === 'male') ? maleVoice : (incise.gender === 'female') ? femaleVoice : narratorVoice;
-      const before = text.slice(0, incise.start);
-      const inciseTxt = text.slice(incise.start, incise.end);
-      const after = text.slice(incise.end);
-      if (before.trim().length > 0) pieces.push({ text: before, voice: dialogueVoice });
-      pieces.push({ text: inciseTxt, voice: narratorVoice });
-      if (after.trim().length > 0) pieces.push({ text: after, voice: dialogueVoice });
-      return pieces.length > 1 ? pieces : null;
-    }
-  }
-
-  return null; // pas de split nécessaire
-}
-
-async function googleTTS(ssml, retries = 12, overrideVoice = null) {
-  const voiceToUse = overrideVoice || selectedVoice;
-  const chirp3 = isChirp3(voiceToUse);
+async function googleTTS(ssml, retries = 12) {
+  const chirp3 = isChirp3(selectedVoice);
   const inputSSML = chirp3 ? sanitizeSSMLForChirp3(ssml) : ssml;
 
   // DEBUG : affiche les 10 premières SSML envoyées à Google TTS dans la console,
@@ -2528,7 +2256,7 @@ async function googleTTS(ssml, retries = 12, overrideVoice = null) {
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
           input:{ ssml: inputSSML },
-          voice:{ languageCode:'fr-FR', name: voiceToUse },
+          voice:{ languageCode:'fr-FR', name: selectedVoice },
           audioConfig
         })
       });
