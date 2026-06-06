@@ -528,6 +528,10 @@ header {
             style="background:var(--lift);border:1px solid var(--border);color:var(--ink);padding:10px 14px;border-radius:8px;cursor:pointer;font-size:13px">
       ➕ Ajouter un autre ePub à la queue
     </button>
+    <!-- Estimation coût Google TTS -->
+    <div id="costEstimate" style="background:var(--lift);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink-dim);line-height:1.6">
+      <div id="costEstimateContent">Sélectionne au moins un chapitre pour voir l'estimation…</div>
+    </div>
     <button id="convertBtn" onclick="startConversion()">
       🎙 Lancer la conversion (<span id="queueCount">0</span> livre<span id="queuePlural"></span>)
     </button>
@@ -779,7 +783,7 @@ function buildVoiceGrid() {
     const d = document.createElement('div');
     d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
     d.innerHTML = `<div class="vc-name">${v.label} <span class="tag ${v.type}">${v.type === 'n2' ? 'Neural2' : 'WaveNet'}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
-    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); };
+    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); updateCostEstimate(); };
     grid.appendChild(d);
   });
 }
@@ -973,6 +977,49 @@ function renderBooksQueue() {
   } else {
     row.style.display = 'none';
   }
+  updateCostEstimate();
+}
+
+// ─── Estimation de coût Google TTS avant lancement ────────────────────────
+function updateCostEstimate() {
+  const el = document.getElementById('costEstimateContent');
+  if (!el) return;
+  let totalChars = 0;
+  let totalChapters = 0;
+  booksQueue.forEach((book, bi) => {
+    book.chapters.forEach((ch, i) => {
+      const cb = document.getElementById(`ch_${bi}_${i}`);
+      if (cb && cb.checked) {
+        totalChars += ch.text.length;
+        totalChapters++;
+      }
+    });
+  });
+  if (totalChars === 0) {
+    el.innerHTML = `Sélectionne au moins un chapitre pour voir l'estimation…`;
+    return;
+  }
+  const { tier, usdPerM, freeM } = getVoiceTier(selectedVoice);
+  const freeChars = freeM * 1_000_000;
+  const billableChars = Math.max(0, totalChars - freeChars);
+  const grossUsd = (totalChars / 1_000_000) * usdPerM;
+  const netUsd   = (billableChars / 1_000_000) * usdPerM;
+  const grossEur = grossUsd * USD_TO_EUR;
+  const netEur   = netUsd * USD_TO_EUR;
+
+  const sign = netEur < 0.5 ? '🟢' : netEur < 5 ? '🟡' : netEur < 20 ? '🟠' : '🔴';
+  const charsFmt = totalChars.toLocaleString('fr');
+  const freeFmt = freeChars.toLocaleString('fr');
+
+  el.innerHTML = `
+    <strong style="color:var(--ink)">💰 Estimation Google TTS</strong> &nbsp;·&nbsp;
+    ${totalChapters} chapitre${totalChapters>1?'s':''} sélectionné${totalChapters>1?'s':''} &nbsp;·&nbsp;
+    <strong>${charsFmt}</strong> caractères<br>
+    Voix <strong>${tier}</strong> · ${usdPerM} $/M après quota gratuit (${freeFmt}/mois)<br>
+    Coût brut : <strong>${grossEur.toFixed(2)} €</strong>
+    &nbsp;→&nbsp; Si quota gratuit non entamé ce mois : ${sign} <strong style="color:var(--ink)">${netEur.toFixed(2)} €</strong>
+    <br><span style="font-size:10px;opacity:.7">⚠ Si tu as déjà converti d'autres livres ce mois-ci, le quota gratuit est probablement épuisé — utilise alors la valeur "coût brut".</span>
+  `;
 }
 
 function removeBookFromQueue(bi) {
@@ -982,6 +1029,7 @@ function removeBookFromQueue(bi) {
 
 function selectAllInBook(bi, val) {
   document.querySelectorAll(`#chapterList_${bi} input[type=checkbox]`).forEach(cb => cb.checked = val);
+  updateCostEstimate();
 }
 
 // Rendu des chapitres pour UN livre spécifique (avec flèches ↑↓ et édition titre)
@@ -1002,7 +1050,7 @@ function renderChapterListForBook(bi) {
     const el = document.createElement('div');
     el.className = 'ch-item';
     el.innerHTML = `
-      <input type="checkbox" id="ch_${bi}_${i}" ${isChecked?'checked':''}>
+      <input type="checkbox" id="ch_${bi}_${i}" ${isChecked?'checked':''} onchange="updateCostEstimate()">
       <span class="ch-item-name" data-bi="${bi}" data-i="${i}" title="Cliquer pour renommer" style="cursor:pointer;flex:1">${ch.title}</span>
       <span class="ch-item-words" style="margin-right:8px">${wc.toLocaleString('fr')} mots</span>
       <button class="ch-move" data-bi="${bi}" data-dir="up"   data-i="${i}" ${i===0?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↑</button>
@@ -2243,6 +2291,18 @@ function sanitizeSSMLForChirp3(ssml) {
 }
 
 function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
+
+// ─── Tarification Google Cloud TTS (USD/M caractères + quota gratuit/mois) ─
+// Source : https://cloud.google.com/text-to-speech/pricing
+function getVoiceTier(voice) {
+  if (voice.includes('Chirp3-HD'))   return { tier: 'Chirp3-HD', usdPerM: 30,  freeM: 1   };
+  if (voice.includes('Studio'))      return { tier: 'Studio',    usdPerM: 160, freeM: 0.1 };
+  if (voice.includes('Neural2'))     return { tier: 'Neural2',   usdPerM: 16,  freeM: 1   };
+  if (voice.includes('Wavenet'))     return { tier: 'WaveNet',   usdPerM: 16,  freeM: 1   };
+  if (voice.includes('Polyglot'))    return { tier: 'Polyglot',  usdPerM: 16,  freeM: 1   };
+  return                                    { tier: 'Standard',  usdPerM: 4,   freeM: 4   };
+}
+const USD_TO_EUR = 0.93;
 
 // Compteur global pour limiter le nombre de logs SSML (sinon spam console)
 let __ssmlDebugCount = 0;
