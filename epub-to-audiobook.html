@@ -1702,6 +1702,27 @@ const PRONUNCIATIONS = {
   'Vespers':        { ipa: 'vɛspɛʁ',       alt: 'Vespères'     },  // s final muet
   'Ozoule':         { ipa: 'ɔzul',         alt: 'Ozoule'       },  // e final muet
 
+  // ── Vocabulaire D&D / fantasy (au-delà des noms propres) ─────────────────
+  // Analyse Whisper : ces mots récurrents du genre étaient mal lus.
+  'drow':           { ipa: 'dʁɔw',         alt: 'drow'         },  // était "drô" (w muet) ou "drôle"
+  'drows':          { ipa: 'dʁɔw',         alt: 'drow'         },  // pluriel s muet, même prononciation que singulier
+  'halfeline':      { ipa: 'alf.lin',      alt: 'halfeline'    },  // pas "half-line"
+  'halfelines':     { ipa: 'alf.lin',      alt: 'halfeline'    },  // s pluriel muet
+  'face-de-lune':   { ipa: 'fasdəlyn',     alt: 'face-de-lune' },  // composé Salvatore, lu d'un trait
+
+  // ── Mots rares qui font buguer le TTS ────────────────────────────────────
+  'impavide':       { ipa: 'ɛ̃pavid',      alt: 'impavide'     },  // était lu "un pas vide" !
+  'd’indices':      { ipa: 'dɛ̃dis',       alt: 'd’indices'    },  // était lu "d'un dix" (1+10) !!!
+  'indices':        { ipa: 'ɛ̃dis',        alt: 'indices'      },  // sécurise les autres formes
+  'sine qua non':   { ipa: 'sinekwanɔn',   alt: 'sine qua non' },  // latin, pas "sinkanon"
+
+  // ── Liaisons critiques qui fusionnent mal ────────────────────────────────
+  // "à ciel ouvert" était lu "à sel ouvert" — perte de sens totale
+  'à ciel':         { ipa: 'a sjɛl',       alt: 'à ciel'       },
+
+  // ── Nom de taverne dans le livre ─────────────────────────────────────────
+  'Cuivre Ante':    { ipa: 'kɥivʁ ɑ̃t',    alt: 'Cuivre Ante'  },  // était fusionné "Cuivrante"
+
   // ── Noms propres Elric (Moorcock) — basés sur l'analyse Whisper du Tome 2 ─
   // Corrections identifiées en comparant la transcription d'un échantillon
   // audio de "La Forteresse de la Perle" avec le texte ePub source.
