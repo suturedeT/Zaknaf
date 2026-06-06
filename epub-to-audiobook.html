@@ -1657,6 +1657,15 @@ const PRONUNCIATIONS = {
   'd’oeil':         'doeil',
   'D’oeil':         'Doeil',
 
+  // "l'œil" seul (sans "coup d'") était lu "l'île œil" — mot inventé !
+  // Bug observé dans la transcription Whisper : "à l'œil" → "à l'île œil".
+  // Format IPA + alt textuel pour Chirp3 (qui ne supporte pas <phoneme>).
+  'l’œil':          { ipa: 'lœj',         alt: 'l’œil'   },
+  'L’œil':          { ipa: 'lœj',         alt: 'L’œil'   },
+  'l’oeil':         { ipa: 'lœj',         alt: 'l’œil'   },
+  'L’oeil':         { ipa: 'lœj',         alt: 'L’œil'   },
+  'l’œil nu':       { ipa: 'lœj ny',      alt: 'l’œil nu'},  // expression "à l'œil nu"
+
   // ── Entrées IPA + ALT pour Chirp3 ────────────────────────────────────────
   // Le pluriel '-ées' fait buguer Chirp3 (lecture lettre par lettre).
   // Solution : alt='forme singulière sans s' → Chirp3 lit la forme propre.
