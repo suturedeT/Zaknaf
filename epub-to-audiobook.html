@@ -1528,6 +1528,57 @@ async function startConversion() {
     totalSentences += total;
     const ssmlMap = {}, mp3Map = {};
 
+    // ── PASSE SÉQUENTIELLE PRE-TTS : assigne voix narrateur/dialogue ──────
+    // Détecte le genre du locuteur pour chaque phrase et MAINTIENT un état
+    // "dernier locuteur connu" entre phrases. Crucial pour les em-dashes
+    // sans attribution explicite ("— Bonjour." sur une ligne) qui reprennent
+    // le speaker précédent.
+    {
+      const maleVoice = localStorage.getItem('epubson_voice_male') || selectedVoice;
+      const femaleVoice = localStorage.getItem('epubson_voice_female') || selectedVoice;
+      const multiVoice = (maleVoice !== selectedVoice) || (femaleVoice !== selectedVoice);
+      if (multiVoice) {
+        let lastGender = null;  // 'male' / 'female' / null
+        let voiceStats = { narrator: 0, male: 0, female: 0, split: 0 };
+        for (let i = 0; i < total; i++) {
+          const s = sentences[i];
+          // 1. Tentative de split intra-phrase
+          const pieces = splitSentenceByVoice(s.text, selectedVoice, maleVoice, femaleVoice);
+          if (pieces && pieces.length > 1) {
+            s.pieces = pieces;
+            voiceStats.split++;
+            // Met à jour lastGender selon le dernier dialogue détecté
+            for (const p of pieces) {
+              if (p.voice === maleVoice) lastGender = 'male';
+              else if (p.voice === femaleVoice) lastGender = 'female';
+            }
+            continue;
+          }
+          // 2. Phrase mono-pièce : détecte le genre
+          let gender = detectSpeakerGender(s.text);
+          // 3. Em-dash sans attribution → hérite du dernier locuteur
+          const isEmDashDialogue = /^[\s]*[—–][\s]/.test(s.text);
+          if (!gender && isEmDashDialogue && lastGender) {
+            gender = lastGender;
+          }
+          if (gender === 'male') {
+            s.voice = maleVoice;
+            voiceStats.male++;
+            lastGender = 'male';
+          } else if (gender === 'female') {
+            s.voice = femaleVoice;
+            voiceStats.female++;
+            lastGender = 'female';
+          } else {
+            voiceStats.narrator++;
+            // Reset lastGender quand on revient à de la narration pure (pas em-dash)
+            if (!isEmDashDialogue && !/[«»—]/.test(s.text)) lastGender = null;
+          }
+        }
+        console.log(`[Multi-voix Ch.${ci+1}] narrateur=${voiceStats.narrator}, homme=${voiceStats.male}, femme=${voiceStats.female}, splits=${voiceStats.split} sur ${total} phrases`);
+      }
+    }
+
     log(`📖 Ch.${ci+1}/${totalChapters} : ${ch.title} (${total} phrases)`,'hi');
 
     // Phase 0 : SSML
@@ -1552,32 +1603,18 @@ async function startConversion() {
       if (aborted) { onAbort(); return; }
       const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
       await Promise.all(slice.map(async idx => {
-        const maleVoice = localStorage.getItem('epubson_voice_male') || selectedVoice;
-        const femaleVoice = localStorage.getItem('epubson_voice_female') || selectedVoice;
-        const multiVoice = (maleVoice !== selectedVoice) || (femaleVoice !== selectedVoice);
-
-        // Multi-voix : on essaye de splitter la phrase en pièces narrateur/dialogue
-        const pieces = multiVoice ? splitSentenceByVoice(sentences[idx].text, selectedVoice, maleVoice, femaleVoice) : null;
-
-        if (pieces && pieces.length > 1) {
-          // Phrase splittée en plusieurs pièces : TTS séparé pour chacune,
-          // décodage + concat dans un seul AudioBuffer pour traiter comme 1 sentence.
+        const sentence = sentences[idx];
+        // Voix pré-calculées dans la passe séquentielle pre-TTS ci-dessous
+        if (sentence.pieces && sentence.pieces.length > 1) {
           const audioBuffers = [];
-          for (const piece of pieces) {
+          for (const piece of sentence.pieces) {
             const pieceSsml = `<speak>${fixSSMLElisions(escapeXml(piece.text))}</speak>`;
             audioBuffers.push(await googleTTS(pieceSsml, 12, piece.voice));
           }
-          // Concaténer les buffers MP3 en 1 seul : on stocke un tableau, géré phase 2
           mp3Map[idx] = audioBuffers;
         } else {
-          const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
-          let voiceForThis = null;
-          if (multiVoice) {
-            const gender = detectSpeakerGender(sentences[idx].text);
-            if (gender === 'male') voiceForThis = maleVoice;
-            else if (gender === 'female') voiceForThis = femaleVoice;
-          }
-          mp3Map[idx] = await googleTTS(ssml, 12, voiceForThis);
+          const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentence.text)}</speak>`;
+          mp3Map[idx] = await googleTTS(ssml, 12, sentence.voice || null);
         }
         ttsDone++;
         setPhaseBar(1, ttsDone/total*100);
