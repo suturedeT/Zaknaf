@@ -1684,10 +1684,23 @@ const PRONUNCIATIONS = {
   'dété':           { ipa: 'dete', alt: 'dété' },  // post-fusion de d'été
   'Dété':           { ipa: 'dete', alt: 'Dété' },
 
-  // Noms propres D&D (Salvatore)
-  'Ellifain':       { ipa: 'elifɛn' },  // -ain prononcé /ɛn/ (è ouvert + n), pas nasalisé
-  'Entreri':        { ipa: 'ɛntʁeʁi' },
-  'Dwahvel':        { ipa: 'dwavɛl' },
+  // Noms propres D&D (Salvatore) — IPA + alt validés via analyse Whisper
+  // du Tome 1 "Serviteur du Cristal" (41 min audio transcrits)
+  'Ellifain':       { ipa: 'elifɛn',       alt: 'Ellifaïne'    },  // -ain non nasalisé
+  'Entreri':        { ipa: 'ɛntʁeʁi',      alt: 'Entreri'      },  // alt explicite pour Chirp3 (78% correct, 22% ajoutait "e" final)
+  'Dwahvel':        { ipa: 'dwavɛl',       alt: 'Doivelle'     },  // /dwavɛl/ = "doi-velle" en phonétique FR
+
+  // Personnages Mercenaires (Bregan D'aerthe)
+  'Sharlotta':      { ipa: 'ʃaʁlɔta',      alt: 'Charlotta'    },  // 30+ variantes Whisper, vrai bug
+  'Sha’lazzi':      { ipa: 'ʃalazi',       alt: 'Chalazi'      },  // apostrophe + zz problématique
+  'Berg’inyon':     { ipa: 'bɛʁɡinjɔn',    alt: 'Berguignon'   },  // apostrophe → "guignon" français
+  'Rai-guy':        { ipa: 'ʁɛɡi',         alt: 'Rai-gui'      },  // hyphen, lectures incohérentes
+  'Kimmuriel':      { ipa: 'kimyʁjɛl',     alt: 'Kimmuriel'    },  // double m forcé via ph
+  'Oblodra':        { ipa: 'ɔblɔdʁa',      alt: 'Oblodra'      },
+  'Basadoni':       { ipa: 'bazadɔni',     alt: 'Basadoni'     },  // un seul s
+  'Portcalim':      { ipa: 'pɔʁkalim',     alt: 'Portcalim'    },  // t silencieux OK
+  'Vespers':        { ipa: 'vɛspɛʁ',       alt: 'Vespères'     },  // s final muet
+  'Ozoule':         { ipa: 'ɔzul',         alt: 'Ozoule'       },  // e final muet
 
   // ── Noms propres Elric (Moorcock) — basés sur l'analyse Whisper du Tome 2 ─
   // Corrections identifiées en comparant la transcription d'un échantillon
