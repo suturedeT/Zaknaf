@@ -864,6 +864,14 @@ async function loadEpub(file) {
       if (internetCover) {
         book.coverUrl = internetCover;
         console.log(`[Cover] ✓ Trouvée sur Internet : ${internetCover}`);
+        // Télécharge les bytes pour pouvoir les embarquer dans le M4B
+        try {
+          const resp = await fetch(internetCover);
+          if (resp.ok) {
+            book.coverBytes = new Uint8Array(await resp.arrayBuffer());
+            book.coverMimeType = resp.headers.get('content-type') || 'image/jpeg';
+          }
+        } catch(e) { console.warn('[Cover] download bytes failed:', e); }
       } else {
         console.log(`[Cover] ✗ Aucune cover trouvée pour "${book.title}"`);
       }
@@ -1049,6 +1057,8 @@ async function parseEpub(zip) {
 
   // Cover image — détection en cascade selon les conventions ePub variées
   let coverUrl = null;
+  let coverBytes = null;       // bytes bruts pour embed dans le M4B
+  let coverMimeType = 'image/jpeg';
   try {
     let coverItem = null;
     // Stratégie 1 : EPUB 3 — manifest item avec properties="cover-image"
@@ -1082,6 +1092,8 @@ async function parseEpub(zip) {
       const imgFile = zip.file(opfDir + href) || zip.file(href);
       if (imgFile) {
         const bytes = await imgFile.async('uint8array');
+        coverBytes = bytes;                       // ← conserve les bytes pour le M4B
+        coverMimeType = mediaType;
         const blob = new Blob([bytes], { type: mediaType });
         coverUrl = URL.createObjectURL(blob);
       }
@@ -1160,7 +1172,7 @@ async function parseEpub(zip) {
     console.log(`[Chapitre] href="${href}" | extr="${originalTitle}" | TOC="${tocTitle||'∅'}" | final="${chTitle}" | ${kept?'KEEP':'DROP ('+dropReason+')'}${overrideReason?' ['+overrideReason+']':''}`);
   }
 
-  return { title, author, coverUrl, chapters };
+  return { title, author, coverUrl, coverBytes, coverMimeType, chapters };
 }
 
 // Parse la TOC EPUB (nav.xhtml v3 ou toc.ncx v2) → Map(href → title).
@@ -1572,7 +1584,7 @@ async function startConversion() {
 
   log(`📦 Construction M4B AAC (${chapterMarks.length} chapitres, ${aacFrames.length} trames)…`,'hi');
   await sleep(0);
-  const m4bParts = buildM4B(aacFrames, chapterMarks, book.title, book.author, SR);
+  const m4bParts = buildM4B(aacFrames, chapterMarks, book.title, book.author, SR, book.coverBytes, book.coverMimeType);
   const m4bBlob  = new Blob(m4bParts, { type:'audio/mp4' });
   const url      = URL.createObjectURL(m4bBlob);
   const sizeMB   = (m4bBlob.size/1024/1024).toFixed(1);
@@ -2322,7 +2334,7 @@ function buildID3v2(title, author) {
 // M4B BUILDER — wrap AAC audio + chapters dans un container MP4/M4B
 // Compatible iTunes, Apple Music, Apple Books iOS (piste de chapitres QT)
 // ─────────────────────────────────────────────────────────────────────────────
-function buildM4B(aacFrames, chapters, title, author, sampleRate) {
+function buildM4B(aacFrames, chapters, title, author, sampleRate, coverBytes = null, coverMimeType = 'image/jpeg') {
   // ── Helpers ────────────────────────────────────────────────────────────────
   const te = new TextEncoder();
   const u16 = v => { const a = new Uint8Array(2); a[0]=(v>>8)&0xFF; a[1]=v&0xFF; return a; };
@@ -2538,13 +2550,29 @@ function buildM4B(aacFrames, chapters, title, author, sampleRate) {
       const data = atom('data', u8a(0,0,0,21), u8a(0,0,0,0), u8a(val));
       return atom(key, data);
     }
-    const ilst = atom('ilst',
-      ilstString('\xA9nam', title || 'Audiobook'),       // titre
-      ilstString('\xA9ART', author || 'Auteur inconnu'), // artiste
-      ilstString('\xA9alb', title || 'Audiobook'),       // album
-      ilstString('\xA9gen', 'Audiobook'),                // genre
-      ilstU8('stik', 2)                                   // media type 2 = Audiobook
+    // Cover image (atom 'covr')
+    //   flags: 0x0D (JPEG) ou 0x0E (PNG)
+    //   data: 4 bytes flags + 4 bytes reserved + image bytes raw
+    function ilstCover(imgBytes, mime) {
+      const isPng = (mime || '').toLowerCase().includes('png');
+      const typeFlag = isPng ? 0x0E : 0x0D;
+      const data = atom('data', u8a(0,0,0,typeFlag), u8a(0,0,0,0), imgBytes);
+      return atom('covr', data);
+    }
+
+    // Construction du ilst — covr ajouté en tête si on a une image
+    const ilstChildren = [];
+    if (coverBytes && coverBytes.length > 0) {
+      ilstChildren.push(ilstCover(coverBytes, coverMimeType));
+    }
+    ilstChildren.push(
+      ilstString('\xA9nam', title || 'Audiobook'),
+      ilstString('\xA9ART', author || 'Auteur inconnu'),
+      ilstString('\xA9alb', title || 'Audiobook'),
+      ilstString('\xA9gen', 'Audiobook'),
+      ilstU8('stik', 2)
     );
+    const ilst = atom('ilst', ...ilstChildren);
     const hdlr_meta = atom('hdlr', TS_BASE, u32(0), te.encode('mdir'), te.encode('appl'), u32(0), u32(0), u8a(0));
     const meta = atom('meta', TS_BASE, hdlr_meta, ilst);
 
