@@ -1689,6 +1689,25 @@ const PRONUNCIATIONS = {
   'Entreri':        { ipa: 'ɛntʁeʁi' },
   'Dwahvel':        { ipa: 'dwavɛl' },
 
+  // ── Noms propres Elric (Moorcock) — basés sur l'analyse Whisper du Tome 2 ─
+  // Corrections identifiées en comparant la transcription d'un échantillon
+  // audio de "La Forteresse de la Perle" avec le texte ePub source.
+  // Chaque entrée précise la prononciation IPA (Neural2/WaveNet) et un alt
+  // textuel correct lu naturellement par Chirp3 après strip du <phoneme>.
+  'Melniboné':      { ipa: 'mɛlnibɔne',    alt: 'Melniboné'    },  // était lu "Melny Bonnet" en deux mots
+  'Melniboné.':     { ipa: 'mɛlnibɔne',    alt: 'Melniboné'    },  // variante fin de phrase
+  'melnibonéen':    { ipa: 'mɛlnibɔneɛ̃',  alt: 'melnibonéen'  },  // adjectif
+  'Quarzhasaat':    { ipa: 'kwaʁzasat',    alt: 'Quarzasaat'   },  // était lu "Kwarza Saat" / "Quarzassat" / "Quarzazate" (3 variantes !)
+  'Quarzhazaat':    { ipa: 'kwaʁzasat',    alt: 'Quarzasaat'   },  // variante orthographique
+  'Yyrkoon':        { ipa: 'jiʁkun',       alt: 'Yirkoune'     },  // était lu "Irkoun" / "Yirkun"
+  'Rackhir':        { ipa: 'ʁakiʁ',        alt: 'Rakir'        },  // kh → k, r final muet
+  'Filkhar':        { ipa: 'filkaʁ',       alt: 'Filkar'       },  // était lu "Filcar"
+  'Tanelorne':      { ipa: 'tanəlɔʁn',     alt: 'Tanelorne'    },  // était lu "Tannélorme"
+  'Karlaak':        { ipa: 'kaʁlak',       alt: 'Karlaak'      },  // était lu "Carlac"
+  'Ufych-Sormeer':  { ipa: 'yfiksɔʁmeʁ',   alt: 'Ufyk-Sormeer' },  // était lu "Uffich-Sormer"
+  'Actorios':       { ipa: 'aktɔʁjɔs',     alt: 'Actorios'     },  // l'Actorios — liaison cassée → "Lactorios"
+  'albinos':        { ipa: 'albinos',      alt: 'albinos'      },  // s final pronouncé (pas muet)
+
   // ── Entrées <lang> : prononciation dans une autre langue ─────────────────
   // Noms d'épées Elric prononcés à l'anglaise. Sur Chirp3 (qui ne supporte
   // pas <lang>), mon sanitizer strippe le tag et Google lit l'alt avec
