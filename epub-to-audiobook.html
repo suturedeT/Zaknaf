@@ -1723,6 +1723,26 @@ const PRONUNCIATIONS = {
   // ── Nom de taverne dans le livre ─────────────────────────────────────────
   'Cuivre Ante':    { ipa: 'kɥivʁ ɑ̃t',    alt: 'Cuivre Ante'  },  // était fusionné "Cuivrante"
 
+  // ── Inversions Q (verbe-pronom) qui perdent leur liaison ────────────────
+  // Analyse Whisper : sont-ils 2x ePub, 0 Whisper → la liaison /t/ est perdue
+  // ou l'hyphen produit une coupure. On force la liaison via IPA.
+  'sont-ils':       { ipa: 'sɔ̃til',       alt: 'sontils'      },  // était lu "sont ils" séparé
+  'sont-elles':     { ipa: 'sɔ̃tɛl',       alt: 'sontelles'    },
+  'ont-ils':        { ipa: 'ɔ̃til',        alt: 'ontils'       },
+  'ont-elles':      { ipa: 'ɔ̃tɛl',        alt: 'ontelles'     },
+  'vont-ils':       { ipa: 'vɔ̃til',       alt: 'vontils'      },
+  'vont-elles':     { ipa: 'vɔ̃tɛl',       alt: 'vontelles'    },
+  'peuvent-ils':    { ipa: 'pœvtil',      alt: 'peuventils'   },
+  'doivent-ils':    { ipa: 'dwavtil',     alt: 'doiventils'   },
+
+  // ── Bregan D'aerthe : composé à gérer comme une unité ───────────────────
+  // L'enchaînement "Bregan" + élision "D'aerthe" (substitué en "Dersse") devient
+  // "Breganders" dans la transcription Whisper. On force la pause.
+  'Bregan D’aerthe':{ ipa: 'bʁegan dɛʁs',  alt: 'Brégane Derce'},
+
+  // ── Mots rares qui font buguer le TTS (suite) ───────────────────────────
+  'l’artefact':     { ipa: 'laʁtəfakt',   alt: 'l’artefact'   },  // 5x ePub, transcrit autrement
+
   // ── Noms propres Elric (Moorcock) — basés sur l'analyse Whisper du Tome 2 ─
   // Corrections identifiées en comparant la transcription d'un échantillon
   // audio de "La Forteresse de la Perle" avec le texte ePub source.
