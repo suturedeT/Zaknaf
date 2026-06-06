@@ -2359,44 +2359,107 @@ function detectSpeakerGender(text) {
   return null;
 }
 
-// Découpe une phrase en pièces avec voix associées :
-//   - contenu DANS les « » → voix du locuteur (male/female selon attribution)
-//   - texte HORS des « » → voix narrateur (incluant "dit-il", "rétorqua-t-elle")
-// Retourne [{text, voice}] dans l'ordre.
+// Détecte une INCISE D'ATTRIBUTION (", dit-elle,", ", rétorqua-t-il,", etc.)
+// dans un fragment de texte et retourne {start, end, gender} ou null.
+// Cherche au minimum : ponctuation + verbe + pronom inversé
+function findInciseAttribution(text) {
+  // Pattern : (virgule|tiret) + verbe + (-t-)? + il/elle + (suite optionnelle)
+  // Capture aussi des compléments : "dit-il en souriant," etc.
+  const inciseRe = new RegExp(
+    '([,;\\-—\\s]+)' +                                  // ponctuation/séparateur
+    '(?:' + VERBS_REGEX + '(?:-t)?-(?:ils?|elles?)' +   // verbe-(t)-il/elle
+        '|(?:il|ils|elle|elles)\\s+' + VERBS_REGEX + ')' + // ou il/elle + verbe
+    '(?:[^.!?,;«»—]*?)' +                                // complément (lieu, manière)
+    '(?=[,;\\-—.!?»]|$)',                                // jusqu'à prochaine ponct ou fin
+    'gi'
+  );
+  const match = inciseRe.exec(text);
+  if (!match) return null;
+  const lower = match[0].toLowerCase();
+  let gender = null;
+  if (/\b(?:il|ils|-il|-ils)\b/.test(lower)) gender = 'male';
+  else if (/\b(?:elle|elles|-elle|-elles)\b/.test(lower)) gender = 'female';
+  return { start: match.index, end: match.index + match[0].length, gender };
+}
+
+// Détermine le genre du locuteur d'un dialogue selon l'attribution autour.
+function detectDialogueGender(dialogueText, contextBefore, contextAfter) {
+  // 1. Chercher attribution DANS le dialogue (« X, dit-elle, Y »)
+  const inside = findInciseAttribution(dialogueText);
+  if (inside?.gender) return inside.gender;
+  // 2. Chercher attribution JUSTE APRÈS le dialogue (« X », dit-elle.)
+  const after = findInciseAttribution(contextAfter.slice(0, 100));
+  if (after?.gender) return after.gender;
+  // 3. Chercher dans le contexte AVANT (rare : "Marc dit : « X »")
+  const before = findInciseAttribution(contextBefore.slice(-100));
+  if (before?.gender) return before.gender;
+  return null;
+}
+
+// Découpe une phrase en pièces avec voix associées.
+//   - texte HORS dialogue → voix narrateur
+//   - texte DANS dialogue « ... » → voix locuteur (male/female), avec
+//     possibilité de couper l'incise interne "dit-elle" en narrateur au milieu
+//   - texte après un — (em-dash, début de phrase) → idem (dialogue oral)
+// Retourne [{text, voice}] ou null si pas de split utile.
 function splitSentenceByVoice(text, narratorVoice, maleVoice, femaleVoice) {
   const pieces = [];
-  let lastEnd = 0;
 
-  // Cherche tous les blocs « ... »
-  const dialogueRe = /«([^»]*?)»/g;
-  let match;
-  while ((match = dialogueRe.exec(text)) !== null) {
-    const before = text.slice(lastEnd, match.index);
-    if (before.trim().length > 0) {
-      pieces.push({ text: before, voice: narratorVoice });
+  // CAS 1 : sentence avec « » — peut contenir une incise interne
+  if (/«[^»]*»/.test(text)) {
+    let lastEnd = 0;
+    const dialogueRe = /«([^»]*?)»/g;
+    let match;
+    while ((match = dialogueRe.exec(text)) !== null) {
+      // Avant le dialogue → narrateur
+      const before = text.slice(lastEnd, match.index);
+      if (before.trim().length > 0) pieces.push({ text: before, voice: narratorVoice });
+
+      const inner = match[1];  // contenu entre « et »
+      const contextBefore = text.slice(Math.max(0, match.index - 200), match.index);
+      const contextAfter  = text.slice(match.index + match[0].length, Math.min(text.length, match.index + match[0].length + 200));
+      const gender = detectDialogueGender(inner, contextBefore, contextAfter);
+      const dialogueVoice = (gender === 'male') ? maleVoice : (gender === 'female') ? femaleVoice : narratorVoice;
+
+      // Cherche une INCISE INTERNE au dialogue (",dit-elle,")
+      const innerIncise = findInciseAttribution(inner);
+      if (innerIncise && innerIncise.gender) {
+        // Split le dialogue en 3 : dialogue-avant, narrateur (incise), dialogue-après
+        const dialogueBefore = inner.slice(0, innerIncise.start);
+        const inciseText = inner.slice(innerIncise.start, innerIncise.end);
+        const dialogueAfter = inner.slice(innerIncise.end);
+        if (dialogueBefore.trim().length > 0) pieces.push({ text: '« ' + dialogueBefore + ' »', voice: dialogueVoice });
+        pieces.push({ text: inciseText, voice: narratorVoice });
+        if (dialogueAfter.trim().length > 0) pieces.push({ text: '« ' + dialogueAfter + ' »', voice: dialogueVoice });
+      } else {
+        // Pas d'incise interne : tout le « » en voix dialogue
+        pieces.push({ text: match[0], voice: dialogueVoice });
+      }
+      lastEnd = match.index + match[0].length;
     }
-    // Pour déterminer la voix du dialogue : on regarde l'attribution AVANT
-    // OU APRÈS la guillemet pour trouver "dit-il/elle" etc.
-    const contextBefore = text.slice(Math.max(0, match.index - 120), match.index).toLowerCase();
-    const contextAfter  = text.slice(match.index + match[0].length, Math.min(text.length, match.index + match[0].length + 120)).toLowerCase();
-    const context = contextBefore + ' ' + contextAfter;
-    const isMasc = new RegExp('\\b' + VERBS_REGEX + '(?:-t)?-ils?\\b|\\b(?:il|ils)\\s+' + VERBS_REGEX + '\\b', 'gi').test(context);
-    const isFem  = new RegExp('\\b' + VERBS_REGEX + '(?:-t)?-elles?\\b|\\b(?:elle|elles)\\s+' + VERBS_REGEX + '\\b', 'gi').test(context);
-    let dialogueVoice = narratorVoice;
-    if (isMasc && !isFem) dialogueVoice = maleVoice;
-    else if (isFem && !isMasc) dialogueVoice = femaleVoice;
-    pieces.push({ text: match[0], voice: dialogueVoice });
-    lastEnd = match.index + match[0].length;
-  }
-  // Reste de la phrase après le dernier dialogue (ou tout si pas de dialogue)
-  const rest = text.slice(lastEnd);
-  if (rest.trim().length > 0) {
-    pieces.push({ text: rest, voice: narratorVoice });
+    const rest = text.slice(lastEnd);
+    if (rest.trim().length > 0) pieces.push({ text: rest, voice: narratorVoice });
+    return pieces.length > 1 ? pieces : null;
   }
 
-  // Si pas de dialogue détecté, on a juste 1 pièce narrateur — pas de split nécessaire
-  if (pieces.length <= 1) return null;
-  return pieces;
+  // CAS 2 : sentence commençant par — (em-dash, dialogue oral)
+  const emDashMatch = text.match(/^[\s]*[—–-][\s]/);
+  if (emDashMatch) {
+    // Chercher l'attribution dans la phrase
+    const incise = findInciseAttribution(text);
+    if (incise) {
+      const dialogueVoice = (incise.gender === 'male') ? maleVoice : (incise.gender === 'female') ? femaleVoice : narratorVoice;
+      const before = text.slice(0, incise.start);
+      const inciseTxt = text.slice(incise.start, incise.end);
+      const after = text.slice(incise.end);
+      if (before.trim().length > 0) pieces.push({ text: before, voice: dialogueVoice });
+      pieces.push({ text: inciseTxt, voice: narratorVoice });
+      if (after.trim().length > 0) pieces.push({ text: after, voice: dialogueVoice });
+      return pieces.length > 1 ? pieces : null;
+    }
+  }
+
+  return null; // pas de split nécessaire
 }
 
 async function googleTTS(ssml, retries = 12, overrideVoice = null) {
