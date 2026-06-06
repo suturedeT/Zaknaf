@@ -492,6 +492,26 @@ header {
     <div id="voicePicker" style="display:none;margin-top:16px">
       <div style="font-size:12px;color:var(--ink-dim);margin-bottom:8px;letter-spacing:0.04em">Choisir la voix de narration</div>
       <div class="voice-grid" id="voiceGrid"></div>
+      <!-- Voix multiples pour différenciation dialogues -->
+      <details style="margin-top:14px;padding:10px 12px;background:var(--lift);border:1px solid var(--border);border-radius:8px">
+        <summary style="cursor:pointer;font-size:13px;color:#fff">🎭 Voix multiples (différencier dialogues)</summary>
+        <div style="font-size:11px;color:var(--ink-dim);margin-top:8px;margin-bottom:10px">
+          Détection automatique des dialogues + genre via heuristique (dit-il/elle, demanda-t-il/elle…).
+          Laisser vide pour utiliser la voix principale partout.
+        </div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:12px;color:var(--ink-dim);margin-bottom:4px">Voix dialogues HOMME</div>
+          <select id="voiceMale" style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
+            <option value="">— Désactivé (utilise voix principale) —</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--ink-dim);margin-bottom:4px">Voix dialogues FEMME</div>
+          <select id="voiceFemale" style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
+            <option value="">— Désactivé (utilise voix principale) —</option>
+          </select>
+        </div>
+      </details>
       <!-- Toggle SSML enrichi via Claude -->
       <label style="display:flex;align-items:center;gap:10px;margin-top:16px;padding:10px 12px;background:var(--lift);border:1px solid var(--border);border-radius:8px;cursor:pointer">
         <input type="checkbox" id="claudeToggle" checked style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
@@ -767,6 +787,7 @@ let audioCtx = null;
 document.getElementById('gcpKey').value    = gcpApiKey;
 document.getElementById('claudeKey').value = claudeApiKey;
 buildVoiceGrid();
+buildDialogueVoiceSelects();
 if (gcpApiKey && claudeApiKey) showStep2();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -779,9 +800,34 @@ function buildVoiceGrid() {
     const d = document.createElement('div');
     d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
     d.innerHTML = `<div class="vc-name">${v.label} <span class="tag ${v.type}">${v.type === 'n2' ? 'Neural2' : 'WaveNet'}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
-    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); };
+    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); buildDialogueVoiceSelects(); };
     grid.appendChild(d);
   });
+}
+
+// Remplit les selects "voix dialogues homme/femme" en filtrant les voix
+// de la MÊME famille que la voix principale (cohérence du rendu audio).
+function buildDialogueVoiceSelects() {
+  const mainType = VOICES.find(v => v.name === selectedVoice)?.type;
+  const compatibleVoices = VOICES.filter(v => v.type === mainType && v.name !== selectedVoice);
+  for (const sex of ['Male', 'Female']) {
+    const select = document.getElementById('voice' + sex);
+    if (!select) continue;
+    const stored = localStorage.getItem('epubson_voice_' + sex.toLowerCase());
+    // Garde l'option vide (désactivé)
+    select.innerHTML = '<option value="">— Désactivé (utilise voix principale) —</option>';
+    const wantedGen = sex === 'Male' ? 'Homme' : 'Femme';
+    for (const v of compatibleVoices) {
+      if (v.gen === wantedGen) {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = `${v.label} — ${v.desc}`;
+        if (stored === v.name) opt.selected = true;
+        select.appendChild(opt);
+      }
+    }
+    select.onchange = () => localStorage.setItem('epubson_voice_' + sex.toLowerCase(), select.value);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1507,7 +1553,16 @@ async function startConversion() {
       const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
       await Promise.all(slice.map(async idx => {
         const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
-        mp3Map[idx] = await googleTTS(ssml);
+        // Détection de genre → choix de la voix de dialogue si configurée
+        const maleVoice = localStorage.getItem('epubson_voice_male');
+        const femaleVoice = localStorage.getItem('epubson_voice_female');
+        let voiceForThis = null;
+        if (maleVoice || femaleVoice) {
+          const gender = detectSpeakerGender(sentences[idx].text);
+          if (gender === 'male' && maleVoice) voiceForThis = maleVoice;
+          else if (gender === 'female' && femaleVoice) voiceForThis = femaleVoice;
+        }
+        mp3Map[idx] = await googleTTS(ssml, 12, voiceForThis);
         ttsDone++;
         setPhaseBar(1, ttsDone/total*100);
         setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
@@ -2228,8 +2283,24 @@ function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
 let __ssmlDebugCount = 0;
 const SSML_DEBUG_MAX = 10;
 
-async function googleTTS(ssml, retries = 12) {
-  const chirp3 = isChirp3(selectedVoice);
+// Détection du genre du locuteur via heuristique française.
+// Renvoie 'male', 'female', ou null (= narration / inconnu).
+function detectSpeakerGender(text) {
+  const lower = text.toLowerCase();
+  // Présence d'un dialogue : « », —, ou des verbes de dialogue
+  const hasDialogue = /«|»|—\s|\s—/.test(text);
+  // Patterns -t-il/elle, -il/elle pour identifier le genre
+  const masc = (lower.match(/\b(?:dit|demanda|répondit|répliqua|murmura|s'écria|soupira|grogna|cria|reprit|ajouta|déclara|continua|gronda|chuchota|lança|fit|songea|pensa|interrogea|interrompit|conclut|admit|insista|protesta|songea|lâcha|maugréa|grommela|riposta|expliqua|ordonna|persifla|railla|conclut|hurla|gémit|annonça|raconta|précisa|commenta|observa)-t-il\b|\bil\s+(?:dit|demanda|répondit|cria|murmura|gronda|hurla)|s'écria-t-il/g) || []).length;
+  const fem  = (lower.match(/\b(?:dit|demanda|répondit|répliqua|murmura|s'écria|soupira|grogna|cria|reprit|ajouta|déclara|continua|gronda|chuchota|lança|fit|songea|pensa|interrogea|interrompit|conclut|admit|insista|protesta|songea|lâcha|maugréa|grommela|riposta|expliqua|ordonna|persifla|railla|conclut|hurla|gémit|annonça|raconta|précisa|commenta|observa)-t-elle\b|\belle\s+(?:dit|demanda|répondit|cria|murmura|gronda|hurla)|s'écria-t-elle/g) || []).length;
+  if (!hasDialogue) return null;
+  if (masc > fem) return 'male';
+  if (fem > masc) return 'female';
+  return null; // dialogue mais genre indéterminé → voix principale
+}
+
+async function googleTTS(ssml, retries = 12, overrideVoice = null) {
+  const voiceToUse = overrideVoice || selectedVoice;
+  const chirp3 = isChirp3(voiceToUse);
   const inputSSML = chirp3 ? sanitizeSSMLForChirp3(ssml) : ssml;
 
   // DEBUG : affiche les 10 premières SSML envoyées à Google TTS dans la console,
@@ -2256,7 +2327,7 @@ async function googleTTS(ssml, retries = 12) {
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
           input:{ ssml: inputSSML },
-          voice:{ languageCode:'fr-FR', name: selectedVoice },
+          voice:{ languageCode:'fr-FR', name: voiceToUse },
           audioConfig
         })
       });
