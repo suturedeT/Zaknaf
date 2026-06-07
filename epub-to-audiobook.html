@@ -543,12 +543,13 @@ header {
       <div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden">
         <div id="quotaBar" style="height:100%;width:0%;background:#86efac;transition:width 0.3s,background 0.3s"></div>
       </div>
-      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:11px">
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:11px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
           <input type="checkbox" id="quotaHardBlock" onchange="saveQuotaSettings()">
           Bloquer le dépassement du quota gratuit
         </label>
-        <button onclick="resetMonthlyQuota()" style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:10px">↺ Reset mensuel</button>
+        <button onclick="adjustMonthlyQuota()" style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:10px">✏️ Ajuster (sync Google)</button>
+        <button onclick="resetMonthlyQuota()" style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:10px">↺ Reset mensuel</button>
       </div>
     </div>
     <button id="convertBtn" onclick="startConversion()">
@@ -789,6 +790,7 @@ let audioCtx = null;
 // ─────────────────────────────────────────────────────────────────────────────
 document.getElementById('gcpKey').value    = gcpApiKey;
 document.getElementById('claudeKey').value = claudeApiKey;
+seedQuotaIfNeeded();
 buildVoiceGrid();
 if (gcpApiKey && claudeApiKey) showStep2();
 
@@ -1101,6 +1103,39 @@ function resetMonthlyQuota() {
     localStorage.removeItem(quotaStoreKey(t, currentMonthKey()));
   });
   refreshQuotaPanel();
+}
+
+// Permet de synchroniser le compteur local avec la valeur exacte affichée
+// par Google Cloud Console (Facturation → Rapports → SKU Chirp3-HD voices).
+function adjustMonthlyQuota() {
+  const { tier } = getVoiceTier(selectedVoice);
+  const current = getMonthlyChars(tier);
+  const val = prompt(
+    `Synchroniser le compteur ${tier} pour le mois ${currentMonthKey()} avec Google Cloud Console.\n\n` +
+    `Va dans Console → Facturation → Rapports → filtre SKU "Count of characters for ${tier} voices",\n` +
+    `et copie la valeur "Utilisation" (en nombre de caractères).\n\n` +
+    `Valeur actuelle (locale) : ${current.toLocaleString('fr')}\n` +
+    `Nouvelle valeur :`,
+    String(current)
+  );
+  if (val === null) return;
+  const n = parseInt(val.replace(/[^0-9]/g, ''), 10);
+  if (isNaN(n) || n < 0) { alert('Valeur invalide.'); return; }
+  localStorage.setItem(quotaStoreKey(tier, currentMonthKey()), String(n));
+  refreshQuotaPanel();
+}
+
+// Seed initial du compteur — exécuté une seule fois par version (flag versionné).
+// Permet d'aligner le compteur local sur la consommation Google déjà engagée.
+function seedQuotaIfNeeded() {
+  const SEED_VERSION = 'v1-202606';
+  if (localStorage.getItem('epubson_quota_seed') === SEED_VERSION) return;
+  // Valeurs constatées sur Google Cloud Console le 2026-06-07 :
+  // SKU "Count of characters for Chirp3-HD voices" = 15 543 942 caractères
+  const seedMonth = '2026-06';
+  localStorage.setItem(quotaStoreKey('Chirp3-HD', seedMonth), '15543942');
+  localStorage.setItem('epubson_quota_seed', SEED_VERSION);
+  console.log('[Quota] Seed initial appliqué : Chirp3-HD 2026-06 = 15 543 942 caractères');
 }
 function refreshQuotaPanel() {
   const el = document.getElementById('quotaPanelContent');
