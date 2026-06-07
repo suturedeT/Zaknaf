@@ -164,11 +164,26 @@ def tts():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/shutdown', methods=['POST', 'OPTIONS'])
+def shutdown():
+    """Arrêt propre demandé depuis l'app web."""
+    if request.method == 'OPTIONS':
+        return ('', 204)
+    print("\n⏹ Arrêt demandé depuis l'app web. Bye !")
+    # Réponse envoyée AVANT le kill, sinon le client voit une déconnexion
+    import threading, time
+    def delayed_exit():
+        time.sleep(0.3)
+        os._exit(0)
+    threading.Thread(target=delayed_exit, daemon=True).start()
+    return jsonify({'status': 'shutting down'})
+
+
 @app.route('/', methods=['GET'])
 def root():
     return jsonify({
         'service': 'Piper TTS local server (ÉpubSon)',
-        'endpoints': ['/health (GET)', '/tts (POST)'],
+        'endpoints': ['/health (GET)', '/tts (POST)', '/shutdown (POST)'],
         'voices_loaded': list(voices.keys()),
     })
 

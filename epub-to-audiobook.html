@@ -895,13 +895,20 @@ function buildVoiceGrid() {
   `;
   grid.appendChild(banner);
 
-  // Bandeau état serveur Piper
+  // Bandeau état serveur Piper + boutons de contrôle
   const piperBanner = document.createElement('div');
-  piperBanner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:rgba(251,191,36,0.06);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);margin-bottom:8px';
+  piperBanner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:rgba(251,191,36,0.06);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
   const piperStatus = __piperAvailable === null ? '⏳ détection…'
-                    : __piperAvailable ? '✅ serveur Piper en ligne (localhost:5005)'
-                                       : '⚠ serveur Piper hors-ligne · lance <code style="background:rgba(255,255,255,0.08);padding:2px 5px;border-radius:3px">python piper_server.py</code>';
-  piperBanner.innerHTML = `🟡 <strong style="color:var(--ink)">Voix Piper (100% local, 0 €)</strong> · ${piperStatus}`;
+                    : __piperAvailable ? '✅ <strong style="color:var(--green)">serveur en ligne</strong> (localhost:5005)'
+                                       : '⚠ <strong style="color:#fbbf24">serveur hors-ligne</strong> · double-clique <code style="background:rgba(255,255,255,0.08);padding:2px 5px;border-radius:3px">start_piper.bat</code>';
+  const buttons = `
+    <button onclick="reconnectPiperServer(this)" style="background:transparent;border:1px solid var(--border);color:var(--ink);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">🔄 Reconnecter</button>
+    ${__piperAvailable ? '<button onclick="shutdownPiperServer(this)" style="background:transparent;border:1px solid var(--border);color:#fca5a5;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">⏹ Arrêter serveur</button>' : ''}
+  `;
+  piperBanner.innerHTML = `
+    <span style="flex:1">🟡 <strong style="color:var(--ink)">Voix Piper (100% local, 0 €)</strong> · ${piperStatus}</span>
+    ${buttons}
+  `;
   grid.appendChild(piperBanner);
 
   VOICES.forEach(v => {
@@ -2930,6 +2937,39 @@ function stripSSMLForPiper(ssml) {
     .replace(/<[^>]+>/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Reconnect button : force un re-check (utile après lancement manuel du serveur)
+async function reconnectPiperServer(btn) {
+  const old = btn.textContent;
+  btn.textContent = '⏳ Test…';
+  btn.disabled = true;
+  __piperAvailable = null;
+  const ok = await piperHealthCheck();
+  btn.textContent = ok ? '✅ Connecté' : '✗ Toujours hors-ligne';
+  buildVoiceGrid();
+  setTimeout(() => {
+    if (document.body.contains(btn)) {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
+  }, 1500);
+}
+
+// Shutdown button : arrête le serveur Python à distance
+async function shutdownPiperServer(btn) {
+  if (!confirm("Arrêter le serveur Piper ?\n\nTu devras le relancer (double-clic sur start_piper.bat) avant de pouvoir réutiliser les voix Piper.")) return;
+  const old = btn.textContent;
+  btn.textContent = '⏳ Arrêt…';
+  btn.disabled = true;
+  try {
+    await fetch(`${PIPER_SERVER_URL}/shutdown`, { method:'POST' });
+  } catch (_) { /* la connexion se coupe avant la réponse, c'est normal */ }
+  // Attends que le serveur soit vraiment down
+  await new Promise(r => setTimeout(r, 1000));
+  __piperAvailable = null;
+  await piperHealthCheck();
+  buildVoiceGrid();
 }
 
 async function piperHealthCheck() {
