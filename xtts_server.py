@@ -11,17 +11,25 @@ INSTALLATION (une seule fois) — séquence VALIDÉE le 2026-06-07
 
   Python 3.9-3.11 (3.10 testé OK) — pas 3.12+
 
-  Séquence d'installation qui MARCHE :
+  Séquence d'installation qui MARCHE (Windows CPU) :
 
       pip install flask flask-cors
-      pip install coqui-tts[codec]
+      pip install coqui-tts                  (sans [codec], voir note)
       pip install "transformers>=4.57,<5"
+      pip install "torch<2.9" "torchaudio<2.9"
       pip install --upgrade pandas
+      pip uninstall -y torchcodec            (si présent)
 
   Pourquoi ces étapes :
-   - 'coqui-tts[codec]' installe coqui-tts + torchcodec (requis Pytorch 2.9+)
-   - transformers <5 car le 5.x supprime 'BeamSearchScorer' utilisé par XTTS
-   - pandas >= 2.x car numpy 2.x est incompatible avec pandas 1.x
+   - transformers <5 : le 5.x supprime 'BeamSearchScorer' utilisé par XTTS
+   - torch <2.9      : PyTorch 2.9+ exigent torchcodec qui requiert FFmpeg
+                       "full-shared" (DLLs séparées) sur Windows. Chocolatey
+                       installe la version "essentials" qui ne suffit pas.
+                       → bypass : rester sur torch 2.8.x sans torchcodec.
+   - pandas >= 2.x   : numpy 2.x est incompatible avec pandas 1.x
+
+  Avec PyTorch 2.8, coqui-tts utilise soundfile/librosa pour l'IO audio
+  → pas besoin de torchcodec / FFmpeg full-shared.
 
   Si l'installation a foiré (anciens TTS résiduels) :
       pip uninstall -y TTS coqui-tts
