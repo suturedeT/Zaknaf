@@ -263,6 +263,9 @@ def synth():
     voice = data.get('voice') or ''
     language = (data.get('language') or 'fr').strip().lower()
 
+    # Paramètres XTTS-v2 (defaults orientés naturel)
+    speed = float(data.get('speed', 1.0))   # 0.7 = lent expressif, 1.3 = rapide
+
     if not text:
         return jsonify({'error': 'text vide'}), 400
 
@@ -274,10 +277,13 @@ def synth():
         }), 404
 
     try:
+        # split_sentences=True : XTTS découpe sur la ponctuation → meilleure prosodie
         audio = tts.tts(
             text=text,
             speaker_wav=voice_path,
             language=language,
+            speed=speed,
+            split_sentences=True,
         )
         if isinstance(audio, list):
             audio = np.array(audio, dtype=np.float32)

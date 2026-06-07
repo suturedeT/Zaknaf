@@ -820,6 +820,13 @@ function getPiperParams() {
     apply_liaisons: localStorage.getItem('epubson_piper_liaisons') !== '0', // défaut ON
   };
 }
+
+function getXttsParams() {
+  return {
+    speed: parseFloat(localStorage.getItem('epubson_xtts_speed') || '0.95'),  // léger ralenti = + naturel
+    batch_sentences: localStorage.getItem('epubson_xtts_batch') !== '0',      // défaut ON
+  };
+}
 function setPiperParam(k, v) {
   localStorage.setItem('epubson_piper_' + k, String(v));
 }
@@ -994,12 +1001,25 @@ function buildVoiceGrid() {
       <button onclick="shutdownXttsServer(this)" style="background:transparent;border:1px solid var(--border);color:#fca5a5;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">⏹ Arrêter</button>
     ` : ''}
   `;
+  const xparams = getXttsParams();
   xttsBanner.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <span style="flex:1">💜 <strong style="color:var(--ink)">XTTS-v2 (voice cloning, 0 €)</strong> · ${xttsStatus}</span>
       ${xttsButtons}
     </div>
-    <div style="margin-top:6px;font-size:10px;opacity:.7">Clone une voix à partir de 6-30 s d'audio. Glisse un fichier .wav/.mp3 ou utilise le bouton.</div>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--border);font-size:11px">
+      <strong style="color:var(--ink);font-size:11px">⚙️ Prosodie :</strong>
+      <label style="display:flex;align-items:center;gap:6px">
+        <span title="1.0 = vitesse normale, <1 = plus lent et expressif">Vitesse</span>
+        <input type="range" min="0.7" max="1.3" step="0.05" value="${xparams.speed}" oninput="updateXttsSpeed(this.value)" style="width:80px">
+        <span id="xttsSpeedLabel" style="color:var(--ink);min-width:32px">${xparams.speed.toFixed(2)}</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Regroupe 3 phrases par appel → XTTS applique sa prosodie sur les virgules/points (très recommandé pour le naturel)">
+        <input type="checkbox" ${xparams.batch_sentences ? 'checked' : ''} onchange="setXttsParam('batch', this.checked ? '1' : '0')">
+        Batch 3 phrases (recommandé)
+      </label>
+      <span style="margin-left:auto;font-size:10px;opacity:.7">Conseil : sample voice 30+ s, clair et expressif</span>
+    </div>
   `;
   grid.appendChild(xttsBanner);
 
@@ -2201,11 +2221,15 @@ async function startConversion() {
     // Phase 1 : TTS
     setPhase(1,'active');
     let ttsDone = 0;
-    // Mode Piper batch : regroupe N phrases pour meilleure prosodie
+    // Mode batch (Piper ou XTTS) : regroupe N phrases pour meilleure prosodie
     const piperBatch = isPiperVoice(selectedVoice) && getPiperParams().batch_sentences;
-    const PIPER_BATCH_SIZE = 4;
-    if (piperBatch) {
-      log(`🟡 Mode Piper batch activé (${PIPER_BATCH_SIZE} phrases/lot)`, 'hi');
+    const xttsBatch  = isXttsVoice(selectedVoice)  && getXttsParams().batch_sentences;
+    const localBatch = piperBatch || xttsBatch;
+    const PIPER_BATCH_SIZE = piperBatch ? 4 : 3;  // XTTS plus prudent (limite 250 tokens/lang)
+    if (localBatch) {
+      const tag = piperBatch ? '🟡 Piper' : '💜 XTTS';
+      const ttsName = piperBatch ? 'Piper-batch' : 'XTTS-batch';
+      log(`${tag} batch activé (${PIPER_BATCH_SIZE} phrases/lot)`, 'hi');
       for (let i = 0; i < total; i += PIPER_BATCH_SIZE) {
         if (aborted) { onAbort(); return; }
         const chunkIdxs = [];
@@ -2227,7 +2251,7 @@ async function startConversion() {
         ttsDone += chunkIdxs.length;
         setPhaseBar(1, ttsDone/total*100);
         setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — batch ${ttsDone}/${total}`);
-        updateGlobal(gBase + gSlice*(0.30 + ttsDone/total*0.40), `Ch.${ci+1} TTS Piper-batch`);
+        updateGlobal(gBase + gSlice*(0.30 + ttsDone/total*0.40), `Ch.${ci+1} TTS ${ttsName}`);
       }
     } else {
       for (let i = 0; i < total; i += CONCURRENCY) {
@@ -3114,6 +3138,16 @@ function applyPiperPreset(name) {
 }
 
 // ─── XTTS UI helpers ────────────────────────────────────────────────
+function setXttsParam(k, v) {
+  localStorage.setItem('epubson_xtts_' + k, String(v));
+}
+function updateXttsSpeed(value) {
+  const v = parseFloat(value);
+  setXttsParam('speed', v);
+  const lab = document.getElementById('xttsSpeedLabel');
+  if (lab) lab.textContent = v.toFixed(2);
+}
+
 async function reconnectXttsServer(btn) {
   const old = btn.textContent;
   btn.textContent = '⏳ Test…'; btn.disabled = true;
@@ -3259,10 +3293,11 @@ async function xttsTTS(ssml, retries = 3) {
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
+      const params = getXttsParams();
       const r = await fetch(`${XTTS_SERVER_URL}/tts`, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ text, voice: v.xttsVoice, language: 'fr' }),
+        body: JSON.stringify({ text, voice: v.xttsVoice, language: 'fr', speed: params.speed }),
       });
       if (!r.ok) {
         const err = await r.text();
