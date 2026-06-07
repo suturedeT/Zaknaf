@@ -159,8 +159,10 @@ header {
   margin-left:5px; vertical-align:middle;
 }
 
-.tag.n2 { background:rgba(192,132,252,0.2); color:var(--accent); }
-.tag.wn { background:rgba(134,239,172,0.15); color:var(--green); }
+.tag.n2   { background:rgba(192,132,252,0.2); color:var(--accent); }
+.tag.wn   { background:rgba(134,239,172,0.15); color:var(--green); }
+.tag.std  { background:rgba(125,211,252,0.15); color:#7dd3fc; }
+.tag.c3hd { background:rgba(252,165,165,0.15); color:#fca5a5; }
 
 /* drop zone */
 #dropzone {
@@ -704,6 +706,12 @@ window.addEventListener('DOMContentLoaded', initAuth);
 // VOICES
 // ─────────────────────────────────────────────────────────────────────────────
 const VOICES = [
+  // ── Standard (4 $/M, 4M gratuits/mois — recommandée pour usage régulier) ──
+  { name:'fr-FR-Standard-C', label:'Camille',   gen:'Femme', type:'std',    desc:'Standard · économique (4M gratuits/mois)' },
+  { name:'fr-FR-Standard-A', label:'Alice',     gen:'Femme', type:'std',    desc:'Standard · économique' },
+  { name:'fr-FR-Standard-E', label:'Émilie',    gen:'Femme', type:'std',    desc:'Standard · économique' },
+  { name:'fr-FR-Standard-B', label:'Bernard',   gen:'Homme', type:'std',    desc:'Standard · économique' },
+  { name:'fr-FR-Standard-D', label:'Daniel',    gen:'Homme', type:'std',    desc:'Standard · économique' },
   // ── Neural2 ────────────────────────────────────────────────────────────────
   { name:'fr-FR-Neural2-C', label:'Sophie',    gen:'Femme', type:'n2',     desc:'Chaleureuse & naturelle' },
   { name:'fr-FR-Neural2-A', label:'Claire',    gen:'Femme', type:'n2',     desc:'Douce & narrative' },
@@ -727,7 +735,15 @@ const VOICES = [
 // ─────────────────────────────────────────────────────────────────────────────
 let gcpApiKey    = localStorage.getItem('epubson_gcp') || '';
 let claudeApiKey = localStorage.getItem('epubson_claude') || '';
-let selectedVoice = localStorage.getItem('epubson_voice') || 'fr-FR-Neural2-C';
+let selectedVoice = localStorage.getItem('epubson_voice') || 'fr-FR-Standard-C';
+// Voix premium (Chirp3-HD, Studio, etc.) verrouillées par défaut.
+// Déverrouillable via le bouton 🔓 au-dessus de la grille.
+function isPremiumVoice(name) {
+  return /Chirp3-HD|Studio/i.test(name);
+}
+function isPremiumUnlocked() {
+  return localStorage.getItem('epubson_premium_unlocked') === '1';
+}
 let chapters = [], bookMeta = {};
 // Queue de livres pour la conversion multi-ePubs. Chaque entrée :
 //   { id, title, author, coverUrl, chapters: [{title, text}] }
@@ -800,13 +816,72 @@ if (gcpApiKey && claudeApiKey) showStep2();
 function buildVoiceGrid() {
   const grid = document.getElementById('voiceGrid');
   grid.innerHTML = '';
+  // Bandeau de verrouillage premium
+  const unlocked = isPremiumUnlocked();
+  const banner = document.createElement('div');
+  banner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:' +
+    (unlocked ? 'rgba(252,165,165,0.08)' : 'rgba(134,239,172,0.08)') +
+    ';border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);' +
+    'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px';
+  banner.innerHTML = `
+    <span>${unlocked
+      ? '🔓 <strong style="color:var(--ink)">Voix premium déverrouillées</strong> — Chirp3-HD à ~24 €/M caractères, hors quota gratuit'
+      : '🔒 <strong style="color:var(--ink)">Voix premium verrouillées</strong> — Standard recommandé (4M caractères gratuits/mois)'
+    }</span>
+    <button onclick="togglePremiumUnlock()" style="background:transparent;border:1px solid var(--border);color:var(--ink);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">${unlocked ? '🔒 Verrouiller' : '🔓 Déverrouiller'}</button>
+  `;
+  grid.appendChild(banner);
+
   VOICES.forEach(v => {
     const d = document.createElement('div');
+    const premium = isPremiumVoice(v.name);
+    const locked = premium && !unlocked;
     d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
-    d.innerHTML = `<div class="vc-name">${v.label} <span class="tag ${v.type}">${v.type === 'n2' ? 'Neural2' : 'WaveNet'}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
-    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); updateCostEstimate(); refreshCachePanel(); refreshQuotaPanel(); };
+    if (locked) {
+      d.style.opacity = '0.35';
+      d.style.cursor = 'not-allowed';
+    }
+    const tierLabel = v.type === 'n2' ? 'Neural2'
+                    : v.type === 'wn' ? 'WaveNet'
+                    : v.type === 'std' ? 'Standard'
+                    : v.type === 'c3hd' ? 'Chirp3-HD' : v.type;
+    const lockIcon = locked ? ' 🔒' : (premium ? ' 💎' : '');
+    d.innerHTML = `<div class="vc-name">${v.label}${lockIcon} <span class="tag ${v.type}">${tierLabel}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
+    d.onclick = () => {
+      if (locked) {
+        if (confirm('Cette voix est facturée par Google (~24 €/M caractères pour Chirp3-HD).\n\nTon quota gratuit est épuisé jusqu\'au 1er juillet.\n\nDéverrouiller les voix premium ?')) {
+          localStorage.setItem('epubson_premium_unlocked', '1');
+          buildVoiceGrid();
+        }
+        return;
+      }
+      selectedVoice = v.name;
+      localStorage.setItem('epubson_voice', v.name);
+      buildVoiceGrid();
+      updateCostEstimate();
+      refreshCachePanel();
+      refreshQuotaPanel();
+    };
     grid.appendChild(d);
   });
+}
+
+function togglePremiumUnlock() {
+  if (isPremiumUnlocked()) {
+    localStorage.setItem('epubson_premium_unlocked', '0');
+    // Si on était sur une voix premium → bascule vers Standard
+    if (isPremiumVoice(selectedVoice)) {
+      selectedVoice = 'fr-FR-Standard-C';
+      localStorage.setItem('epubson_voice', selectedVoice);
+    }
+  } else {
+    if (!confirm('Déverrouiller les voix premium ?\n\nChirp3-HD = ~24 €/M caractères TTC, sans crédit gratuit restant ce mois.')) return;
+    localStorage.setItem('epubson_premium_unlocked', '1');
+  }
+  buildVoiceGrid();
+  updateCostEstimate();
+  refreshCachePanel();
+  refreshQuotaPanel();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1127,15 +1202,52 @@ function adjustMonthlyQuota() {
 
 // Seed initial du compteur — exécuté une seule fois par version (flag versionné).
 // Permet d'aligner le compteur local sur la consommation Google déjà engagée.
+// Active aussi automatiquement les protections (hard-block + verrouillage premium)
+// car le crédit gratuit est complètement épuisé.
 function seedQuotaIfNeeded() {
-  const SEED_VERSION = 'v1-202606';
+  const SEED_VERSION = 'v2-202606';
   if (localStorage.getItem('epubson_quota_seed') === SEED_VERSION) return;
   // Valeurs constatées sur Google Cloud Console le 2026-06-07 :
   // SKU "Count of characters for Chirp3-HD voices" = 15 543 942 caractères
+  // Crédit FreeTrialUpgrade entièrement consommé (0,00 € restant)
   const seedMonth = '2026-06';
   localStorage.setItem(quotaStoreKey('Chirp3-HD', seedMonth), '15543942');
+  // Active le hard-block par défaut (le crédit est mort, plus de marge)
+  if (localStorage.getItem('epubson_quota_hardblock') === null) {
+    localStorage.setItem('epubson_quota_hardblock', '1');
+  }
+  // Verrouille les voix premium par défaut (force Standard)
+  if (localStorage.getItem('epubson_premium_unlocked') === null) {
+    localStorage.setItem('epubson_premium_unlocked', '0');
+  }
+  // Bascule sur Standard si on était sur une voix premium
+  const currentVoice = localStorage.getItem('epubson_voice');
+  if (currentVoice && isPremiumVoice(currentVoice) && !isPremiumUnlocked()) {
+    localStorage.setItem('epubson_voice', 'fr-FR-Standard-C');
+    selectedVoice = 'fr-FR-Standard-C';
+  }
   localStorage.setItem('epubson_quota_seed', SEED_VERSION);
-  console.log('[Quota] Seed initial appliqué : Chirp3-HD 2026-06 = 15 543 942 caractères');
+  console.log('[Quota] Seed v2 appliqué : Chirp3-HD juin = 15 543 942 chars · hard-block ON · premium verrouillé · voix=Standard-C');
+}
+
+// Total caractères + € facturé tous tiers confondus pour le mois courant.
+function getMonthlyTotalSpending() {
+  const month = currentMonthKey();
+  const tiers = ['Chirp3-HD','Studio','Neural2','WaveNet','Polyglot','Standard'];
+  let totalEur = 0, totalChars = 0, lines = [];
+  for (const t of tiers) {
+    const used = parseInt(localStorage.getItem(quotaStoreKey(t, month)) || '0', 10);
+    if (used === 0) continue;
+    const info = { 'Chirp3-HD':{u:30,f:1}, 'Studio':{u:160,f:0.1}, 'Neural2':{u:16,f:1},
+                   'WaveNet':{u:16,f:1}, 'Polyglot':{u:16,f:1}, 'Standard':{u:4,f:4} }[t];
+    const free = info.f * 1_000_000;
+    const billable = Math.max(0, used - free);
+    const eur = (billable / 1_000_000) * info.u * USD_TO_EUR;
+    totalEur += eur;
+    totalChars += used;
+    lines.push({ tier: t, used, billable, eur });
+  }
+  return { totalEur, totalChars, lines };
 }
 function refreshQuotaPanel() {
   const el = document.getElementById('quotaPanelContent');
@@ -1153,10 +1265,23 @@ function refreshQuotaPanel() {
   else if (pct >= 80) color = '#fdba74';    // orange
   else if (pct >= 50) color = '#fde047';    // jaune
 
+  // Total facturé tous tiers confondus pour le mois
+  const total = getMonthlyTotalSpending();
+  const totalLines = total.lines.map(l =>
+    `<span style="opacity:.85">${l.tier} : ${l.used.toLocaleString('fr')} char${l.billable > 0 ? ` (+${(l.eur).toFixed(2)} €)` : ' (gratuit)'}</span>`
+  ).join(' · ');
+  const totalLine = total.totalEur > 0
+    ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:11px">
+         💸 <strong style="color:var(--ink)">Dépensé ce mois (tous tiers)</strong> : <strong style="color:#fca5a5">${total.totalEur.toFixed(2)} €</strong> · ${total.totalChars.toLocaleString('fr')} caractères<br>
+         <span style="font-size:10px;opacity:.7">${totalLines}</span>
+       </div>`
+    : '';
+
   el.innerHTML = `
     <strong style="color:var(--ink)">📊 Quota gratuit Google TTS</strong> · ${month} · voix <strong>${tier}</strong><br>
     <strong>${used.toLocaleString('fr')}</strong> / ${free.toLocaleString('fr')} caractères facturés (<strong style="color:${color}">${pct.toFixed(1)}%</strong>)
     ${over > 0 ? `<br><span style="color:#fca5a5">⚠ Dépassement : ${over.toLocaleString('fr')} caractères → ~${overEur} € à payer</span>` : ''}
+    ${totalLine}
     <br><span style="font-size:10px;opacity:.7">Le compteur est local au navigateur — il s'incrémente uniquement sur les appels Google effectifs (cache miss). Google reset le quota le 1er du mois.</span>
   `;
   const bar = document.getElementById('quotaBar');
