@@ -794,6 +794,7 @@ function getPiperParams() {
     length_scale: parseFloat(localStorage.getItem('epubson_piper_length') || '1.10'),
     noise_w_scale: parseFloat(localStorage.getItem('epubson_piper_noisew') || '0.9'),
     batch_sentences: localStorage.getItem('epubson_piper_batch') !== '0',  // défaut ON
+    apply_liaisons: localStorage.getItem('epubson_piper_liaisons') !== '0', // défaut ON
   };
 }
 function setPiperParam(k, v) {
@@ -938,6 +939,10 @@ function buildVoiceGrid() {
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Regroupe 4 phrases par appel → Piper ajoute des pauses naturelles aux virgules/points (+naturel mais 4× moins de progression visible)">
         <input type="checkbox" ${params.batch_sentences ? 'checked' : ''} onchange="setPiperParam('batch', this.checked ? '1' : '0')">
         Batch 4 phrases
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Force les liaisons obligatoires françaises (les enfants → lèz-enfants) via insertion de traits d'union avant phonemizer">
+        <input type="checkbox" ${params.apply_liaisons ? 'checked' : ''} onchange="setPiperParam('liaisons', this.checked ? '1' : '0')">
+        Liaisons FR
       </label>
       <span style="margin-left:auto;display:flex;gap:6px">
         <button onclick="applyPiperPreset('rapide')"   style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:10px">Rapide</button>
@@ -3104,6 +3109,7 @@ async function piperTTS(ssml, retries = 3) {
           speaker_id: voice.pipSpeakerId,
           length_scale: params.length_scale,
           noise_w_scale: params.noise_w_scale,
+          apply_liaisons: params.apply_liaisons,
         }),
       });
       if (!r.ok) {

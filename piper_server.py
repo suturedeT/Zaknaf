@@ -49,6 +49,7 @@ USAGE (à chaque session)
 """
 import io
 import os
+import re
 import sys
 import wave
 
@@ -79,6 +80,58 @@ PORT = 5005
 VOICE_NAMES = [
     'fr_FR-upmc-medium',
 ]
+
+# ── Liaisons françaises forcées ───────────────────────────────────────
+# Piper utilise eSpeak-ng comme phonemizer, qui ne fait PAS les liaisons FR
+# obligatoires (les enfants → /lez ɑ̃fɑ̃/). Astuce : on insère un trait d'union
+# entre les mots, eSpeak les traite comme un seul groupe phonétique → la
+# consonne finale silencieuse devient sonore.
+#
+# Exemples :
+#   "les enfants"  → "les-enfants"   → /lezɑ̃fɑ̃/  (z liaison) ✓
+#   "petit ami"    → "petit-ami"     → /pətitami/ (t liaison) ✓
+#   "vous avez"    → "vous-avez"     → /vuzave/   (z liaison) ✓
+#   "un homme"     → "un-homme"      → /œ̃nɔm/     (n liaison) ✓
+V = r'aeiouéèêëàâîïôöùûüœhAEIOUÉÈÊËÀÂÎÏÔÖÙÛÜŒH'
+
+LIAISON_RULES = [
+    # Articles/déterminants pluriel → /z/
+    (re.compile(rf'\b(les|des|mes|tes|ses|ces|nos|vos|leurs|aux|quelques|plusieurs)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    # Pronoms personnels avant voyelle → /z/
+    (re.compile(rf'\b(nous|vous|ils|elles|on)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    # Pronoms compléments y/en → /n/ /z/
+    (re.compile(rf'\b(en|y)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    # Déterminants singuliers → /n/
+    (re.compile(rf'\b(un|aucun|mon|ton|son|bon|moyen|certain)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    # Adjectifs antéposés courts → /t/ ou /z/ selon
+    (re.compile(rf'\b(petit|petits|grand|grands|gros|haut|hauts|tout|tous|saint|vingt|cent|fort|forts|long|longs|premier|premiers|dernier|derniers)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    # Prépositions → /z/ /t/
+    (re.compile(rf'\b(chez|sous|sans|dans|dès|pendant|avant|après|sauf|devant)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    # Verbes 3e pers + complément → /t/
+    (re.compile(rf'\b(est|sont|était|étaient|sera|seront|fait|fut|peut|veut|doit|prend|tient|vient|sait|dit|met|paraît)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    # Conjonctions
+    (re.compile(rf'\b(mais|puis|donc|quand|trop|fort|bien|comment|combien|moins|plus)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    # Auxiliaires + participe à voyelle (a été, ont été, etc.)
+    (re.compile(rf'\b(ont|avons|avez|sommes|êtes)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+]
+
+# H aspiré : ces mots commencent par 'h' MAIS ne déclenchent PAS de liaison.
+# On les exclut en remplaçant le hyphen par un espace après application.
+H_ASPIRE = {'haricot','héros','hibou','hache','haie','haine','hâte','haut','hauteur',
+            'hall','halle','halte','hamac','hamster','hanche','handicap','hangar',
+            'harnais','harpe','hasard','hâte','hère','hérisson','hibou','hisser',
+            'hocher','homard','hongrois','honte','hotte','houblon','hublot','huit',
+            'hurler','hutte','huit'}
+
+def apply_french_liaisons(text):
+    """Insère des hyphens pour forcer les liaisons obligatoires françaises."""
+    for pattern, repl in LIAISON_RULES:
+        text = pattern.sub(repl, text)
+    # Annule les fausses liaisons sur h-aspiré : "les héros" → "les-héros" → "les héros"
+    for h in H_ASPIRE:
+        text = re.sub(rf'-({h[0]}{h[1:]})', r' \1', text, flags=re.IGNORECASE)
+    return text
+
 
 # ── Init Flask + CORS ─────────────────────────────────────────────────
 app = Flask(__name__)
@@ -149,6 +202,10 @@ def tts():
     noise_scale  = float(data.get('noise_scale', 0.667))   # variabilité du pitch
     noise_w     = float(data.get('noise_w_scale', 0.9))    # variabilité durée syllabes (défaut 0.8 → 0.9 = plus humain)
     volume       = float(data.get('volume', 1.0))
+    apply_liaisons = bool(data.get('apply_liaisons', True))  # liaisons FR forcées
+
+    if apply_liaisons:
+        text = apply_french_liaisons(text)
 
     voice = voices[model]
     try:
