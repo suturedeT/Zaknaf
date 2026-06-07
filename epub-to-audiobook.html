@@ -532,6 +532,11 @@ header {
     <div id="costEstimate" style="background:var(--lift);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink-dim);line-height:1.6">
       <div id="costEstimateContent">Sélectionne au moins un chapitre pour voir l'estimation…</div>
     </div>
+    <!-- Cache audio TTS -->
+    <div id="cachePanel" style="background:var(--lift);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink-dim);line-height:1.6;display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div id="cachePanelContent" style="flex:1">Cache audio : chargement…</div>
+      <button id="cacheClearBtn" onclick="clearTTSCacheUI()" style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">🗑 Vider</button>
+    </div>
     <button id="convertBtn" onclick="startConversion()">
       🎙 Lancer la conversion (<span id="queueCount">0</span> livre<span id="queuePlural"></span>)
     </button>
@@ -783,7 +788,7 @@ function buildVoiceGrid() {
     const d = document.createElement('div');
     d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
     d.innerHTML = `<div class="vc-name">${v.label} <span class="tag ${v.type}">${v.type === 'n2' ? 'Neural2' : 'WaveNet'}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
-    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); updateCostEstimate(); };
+    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); updateCostEstimate(); refreshCachePanel(); };
     grid.appendChild(d);
   });
 }
@@ -978,6 +983,7 @@ function renderBooksQueue() {
     row.style.display = 'none';
   }
   updateCostEstimate();
+  refreshCachePanel();
 }
 
 // ─── Estimation de coût Google TTS avant lancement ────────────────────────
@@ -1020,6 +1026,31 @@ function updateCostEstimate() {
     &nbsp;→&nbsp; Si quota gratuit non entamé ce mois : ${sign} <strong style="color:var(--ink)">${netEur.toFixed(2)} €</strong>
     <br><span style="font-size:10px;opacity:.7">⚠ Si tu as déjà converti d'autres livres ce mois-ci, le quota gratuit est probablement épuisé — utilise alors la valeur "coût brut".</span>
   `;
+}
+
+// ─── Cache audio TTS — UI ────────────────────────────────────────────────
+async function refreshCachePanel() {
+  const el = document.getElementById('cachePanelContent');
+  if (!el) return;
+  const stats = await ttsCacheStats();
+  const mb = (stats.bytes / 1024 / 1024).toFixed(1);
+  const { usdPerM } = getVoiceTier(selectedVoice);
+  const cachedEur = ((stats.chars / 1_000_000) * usdPerM * USD_TO_EUR).toFixed(2);
+  const savedSessionEur = ((__ttsCacheStats.savedChars / 1_000_000) * usdPerM * USD_TO_EUR).toFixed(2);
+  el.innerHTML = `
+    <strong style="color:var(--ink)">💾 Cache audio TTS</strong> &nbsp;·&nbsp;
+    <strong>${stats.count.toLocaleString('fr')}</strong> entrées · <strong>${mb} Mo</strong> ·
+    ${stats.chars.toLocaleString('fr')} caractères stockés<br>
+    Économie totale potentielle si tout est ré-encodé : ~<strong>${cachedEur} €</strong>
+    ${__ttsCacheStats.hits || __ttsCacheStats.misses ? ` · Session : <strong>${__ttsCacheStats.hits}</strong> hits / <strong>${__ttsCacheStats.misses}</strong> miss → économisé <strong>${savedSessionEur} €</strong>` : ''}
+    <br><span style="font-size:10px;opacity:.7">Persistant entre sessions. Une modif de la voix, d'une phrase ou des paramètres TTS invalide l'entrée correspondante.</span>
+  `;
+}
+
+async function clearTTSCacheUI() {
+  if (!confirm('Vider tout le cache audio TTS ? Les prochaines conversions seront refacturées par Google.')) return;
+  await ttsCacheClear();
+  await refreshCachePanel();
 }
 
 function removeBookFromQueue(bi) {
@@ -2308,6 +2339,100 @@ const USD_TO_EUR = 0.93;
 let __ssmlDebugCount = 0;
 const SSML_DEBUG_MAX = 10;
 
+// ─── Cache audio TTS (IndexedDB, persistant) ─────────────────────────────
+// Évite la re-facturation Google lors de ré-encodages successifs.
+// Clé = SHA-256(SSML + voix + audioConfig) → toute modif invalide l'entrée.
+const TTS_CACHE_DB = 'epubson-tts-cache';
+const TTS_CACHE_STORE = 'audio';
+
+let __ttsCacheStats = { hits: 0, misses: 0, savedChars: 0 };
+let __ttsCacheDB = null;
+
+function openTTSCache() {
+  if (__ttsCacheDB) return Promise.resolve(__ttsCacheDB);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(TTS_CACHE_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(TTS_CACHE_STORE)) {
+        const store = db.createObjectStore(TTS_CACHE_STORE, { keyPath: 'hash' });
+        store.createIndex('createdAt', 'createdAt');
+      }
+    };
+    req.onsuccess = () => { __ttsCacheDB = req.result; resolve(__ttsCacheDB); };
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function sha256Hex(str) {
+  const buf = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function ttsCacheKey(ssml, voice, audioConfig) {
+  return await sha256Hex(JSON.stringify({ s: ssml, v: voice, a: audioConfig }));
+}
+
+async function ttsCacheGet(hash) {
+  try {
+    const db = await openTTSCache();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(TTS_CACHE_STORE, 'readonly');
+      const req = tx.objectStore(TTS_CACHE_STORE).get(hash);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror   = () => resolve(null);
+    });
+  } catch (_) { return null; }
+}
+
+async function ttsCachePut(hash, audioBuffer, charCount, voice) {
+  try {
+    const db = await openTTSCache();
+    await new Promise((resolve) => {
+      const tx = db.transaction(TTS_CACHE_STORE, 'readwrite');
+      tx.objectStore(TTS_CACHE_STORE).put({
+        hash, audio: audioBuffer, chars: charCount, voice, createdAt: Date.now()
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve();
+      tx.onabort    = () => resolve();
+    });
+  } catch (_) {}
+}
+
+async function ttsCacheStats() {
+  try {
+    const db = await openTTSCache();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(TTS_CACHE_STORE, 'readonly');
+      const all = tx.objectStore(TTS_CACHE_STORE).getAll();
+      all.onsuccess = () => {
+        let bytes = 0, chars = 0;
+        for (const it of all.result) {
+          bytes += it.audio?.byteLength || 0;
+          chars += it.chars || 0;
+        }
+        resolve({ count: all.result.length, bytes, chars });
+      };
+      all.onerror = () => resolve({ count: 0, bytes: 0, chars: 0 });
+    });
+  } catch (_) { return { count: 0, bytes: 0, chars: 0 }; }
+}
+
+async function ttsCacheClear() {
+  try {
+    const db = await openTTSCache();
+    await new Promise((resolve) => {
+      const tx = db.transaction(TTS_CACHE_STORE, 'readwrite');
+      tx.objectStore(TTS_CACHE_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve();
+    });
+    __ttsCacheStats = { hits: 0, misses: 0, savedChars: 0 };
+  } catch (_) {}
+}
+
 async function googleTTS(ssml, retries = 12) {
   const chirp3 = isChirp3(selectedVoice);
   const inputSSML = chirp3 ? sanitizeSSMLForChirp3(ssml) : ssml;
@@ -2328,6 +2453,16 @@ async function googleTTS(ssml, retries = 12) {
   const audioConfig = chirp3
     ? { audioEncoding:'LINEAR16', sampleRateHertz:44100 }
     : { audioEncoding:'LINEAR16', sampleRateHertz:44100, speakingRate:1.04, pitch:0, effectsProfileId:['headphone-class-device'] };
+
+  // ─── CACHE LOOKUP : évite la re-facturation Google ───
+  const cacheHash = await ttsCacheKey(inputSSML, selectedVoice, audioConfig);
+  const cached = await ttsCacheGet(cacheHash);
+  if (cached && cached.audio) {
+    __ttsCacheStats.hits++;
+    __ttsCacheStats.savedChars += cached.chars || inputSSML.length;
+    return cached.audio;
+  }
+  __ttsCacheStats.misses++;
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
@@ -2355,6 +2490,8 @@ async function googleTTS(ssml, retries = 12) {
       }
       const data  = await resp.json();
       const bytes = Uint8Array.from(atob(data.audioContent), c => c.charCodeAt(0));
+      // ─── CACHE WRITE : stocke pour les futurs ré-encodages ───
+      await ttsCachePut(cacheHash, bytes.buffer, inputSSML.length, selectedVoice);
       return bytes.buffer;
     } catch(e) {
       if (aborted) throw new Error('Aborted');
