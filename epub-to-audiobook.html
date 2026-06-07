@@ -2459,23 +2459,25 @@ const PRONUNCIATIONS = {
   'Dété':           { ipa: 'dete', alt: 'Dété' },
 
   // ── Personnages "Terre natale" (Tome 1 Légende de Drizzt) ──────────────
-  // Analyse Whisper Chapitre 1 (37 min audio, 5219 mots transcrits)
-  'Briza':          { ipa: 'bʁiza',        alt: 'Briza'        },  // z lu /s/ → "Brisa" 21x
-  'Rizzen':         { ipa: 'ʁizɛn',        alt: 'Rizzen'       },  // z lu /s/ → "Risen" 4x
-  'Lolth':          { ipa: 'lɔlt',         alt: 'Lolt'         },  // th + s parasite → "lols" 7x
-  'Do’Urden':       { ipa: 'douʁdɛn',      alt: 'Do Urden'     },  // apostrophe → "d'ourden" 13x, "d'eau-hourden" 8x
-  'do’Urden':       { ipa: 'douʁdɛn',      alt: 'do Urden'     },
-  'Devir':          { ipa: 'dəviʁ',        alt: 'Devir'        },  // splittée "de vire" 10x
-  'Baenre':         { ipa: 'bɛnʁə',        alt: 'Baenre'       },  // splittée "ben re"
-  'Zaknafein':      { ipa: 'zaknafɛn',     alt: 'Zaknafein'    },  // splittée + k lu /ʃ/
-  'Zak':            { ipa: 'zak',          alt: 'Zak'          },  // k lu /ʃ/ → "zach" 4x (standalone)
-  'piwafwi':        { ipa: 'piwafwi',      alt: 'piwafwi'      },  // mot drow rare → "piwafoui"
-  'piwafwis':       { ipa: 'piwafwi',      alt: 'piwafwi'      },
-  'Tier Breche':    { ipa: 'tjɛʁ bʁɛʃ',    alt: 'Tier Breche'  },  // mergé → "tirebrèche"
-  'melee-magthere': { ipa: 'mɛle magtɛʁ',  alt: 'melee magthere' },
-  'dweomers':       { ipa: 'dweomeʁ',      alt: 'dweomers'     },
-  'dweomer':        { ipa: 'dweomeʁ',      alt: 'dweomer'      },
-  'thallophytes':   { ipa: 'talɔfit',      alt: 'thallophyte'  },
+  // Analyse Whisper Chapitre 1 + retours utilisateur XTTS.
+  // alt = orthographe FR-phonétique pour XTTS/Piper/Chirp3 (qui strip <phoneme>)
+  // IPA inchangée pour Google Neural2/WaveNet qui lisent via ph=
+  'Briza':          { ipa: 'bʁiza',        alt: 'Briza'        },  // /bʁiza/ OK en lecture FR native
+  'Rizzen':         { ipa: 'ʁizɛn',        alt: 'Rizzène'      },  // ajout accent grave → forcer /ɛn/ final
+  'Lolth':          { ipa: 'lɔlt',         alt: 'Lolt'         },  // OK pure FR
+  'Do’Urden':       { ipa: 'douʁdɛn',      alt: 'Do Urdène'    },  // accent grave + e final pour /dɛn/
+  'do’Urden':       { ipa: 'douʁdɛn',      alt: 'do Urdène'    },
+  'Devir':          { ipa: 'dəviʁ',        alt: 'Devir'        },  // OK FR
+  'Baenre':         { ipa: 'bɛnʁə',        alt: 'Bène-re'      },  // 'aen' incompris → forcer /bɛn.ʁə/
+  'Zaknafein':      { ipa: 'zaknafɛn',     alt: 'Zaknafène'    },  // 'ein' lu /ɛ̃/ vs voulu /ɛn/ → accent
+  'Zak':            { ipa: 'zak',          alt: 'Zak'          },  // OK FR
+  'piwafwi':        { ipa: 'piwafwi',      alt: 'piwafoui'     },  // 'wi' inconnu en FR → 'oui' /wi/
+  'piwafwis':       { ipa: 'piwafwi',      alt: 'piwafoui'     },
+  'Tier Breche':    { ipa: 'tjɛʁ bʁɛʃ',    alt: 'Tier Brèche'  },  // accent grave pour /ɛʃ/
+  'melee-magthere': { ipa: 'mɛle magtɛʁ',  alt: 'mêlée magtère' }, // accents FR-natifs
+  'dweomers':       { ipa: 'dweomeʁ',      alt: 'douéomère'    },  // 'dw' inconnu → 'doué'
+  'dweomer':        { ipa: 'dweomeʁ',      alt: 'douéomère'    },
+  'thallophytes':   { ipa: 'talɔfit',      alt: 'thallophyte'  },  // mot FR scientifique réel
   'thallophyte':    { ipa: 'talɔfit',      alt: 'thallophyte'  },
 
   // ── Personnages "Serviteur du Cristal" (Salvatore) ──────────────────────
@@ -2485,16 +2487,16 @@ const PRONUNCIATIONS = {
   'Dwahvel':        { ipa: 'dwavɛl',       alt: 'Doivelle'     },  // /dwavɛl/ = "doi-velle" en phonétique FR
 
   // Personnages Mercenaires (Bregan D'aerthe)
-  'Sharlotta':      { ipa: 'ʃaʁlɔta',      alt: 'Charlotta'    },  // 30+ variantes Whisper, vrai bug
-  'Sha’lazzi':      { ipa: 'ʃalazi',       alt: 'Chalazi'      },  // apostrophe + zz problématique
-  'Berg’inyon':     { ipa: 'bɛʁɡinjɔn',    alt: 'Berguignon'   },  // apostrophe → "guignon" français
-  'Rai-guy':        { ipa: 'ʁɛɡi',         alt: 'Rai-gui'      },  // hyphen, lectures incohérentes
-  'Kimmuriel':      { ipa: 'kimyʁjɛl',     alt: 'Kimmuriel'    },  // double m forcé via ph
-  'Oblodra':        { ipa: 'ɔblɔdʁa',      alt: 'Oblodra'      },
-  'Basadoni':       { ipa: 'bazadɔni',     alt: 'Basadoni'     },  // un seul s
-  'Portcalim':      { ipa: 'pɔʁkalim',     alt: 'Portcalim'    },  // t silencieux OK
-  'Vespers':        { ipa: 'vɛspɛʁ',       alt: 'Vespères'     },  // s final muet
-  'Ozoule':         { ipa: 'ɔzul',         alt: 'Ozoule'       },  // e final muet
+  'Sharlotta':      { ipa: 'ʃaʁlɔta',      alt: 'Charlotta'    },  // 'Ch' FR-natif pour /ʃ/
+  'Sha’lazzi':      { ipa: 'ʃalazi',       alt: 'Chalazi'      },
+  'Berg’inyon':     { ipa: 'bɛʁɡinjɔn',    alt: 'Berguinione'  },  // 'gui'+'nione' → /ɡinjɔn/ propre
+  'Rai-guy':        { ipa: 'ʁɛɡi',         alt: 'Rè-gui'       },  // accent grave force /ʁɛ/
+  'Kimmuriel':      { ipa: 'kimyʁjɛl',     alt: 'Kimmuriel'    },  // OK FR (-iel /jɛl/)
+  'Oblodra':        { ipa: 'ɔblɔdʁa',      alt: 'Oblodra'      },  // OK FR
+  'Basadoni':       { ipa: 'bazadɔni',     alt: 'Basadoni'     },  // OK FR (s entre voyelles → /z/)
+  'Portcalim':      { ipa: 'pɔʁkalim',     alt: 'Porcalim'     },  // drop 't' silencieux → meilleur
+  'Vespers':        { ipa: 'vɛspɛʁ',       alt: 'Vespère'      },  // s final muet, alt sans s
+  'Ozoule':         { ipa: 'ɔzul',         alt: 'Ozoule'       },  // OK FR
 
   // ── Vocabulaire D&D / fantasy (au-delà des noms propres) ─────────────────
   // Analyse Whisper : ces mots récurrents du genre étaient mal lus.
@@ -2505,15 +2507,15 @@ const PRONUNCIATIONS = {
   'drows':          { ipa: 'dʁɔw',         alt: 'dro'          },  // pluriel s muet
   'Drow':           { ipa: 'dʁɔw',         alt: 'Dro'          },  // majuscule (début de phrase)
   'Drows':          { ipa: 'dʁɔw',         alt: 'Dro'          },
-  'halfeline':      { ipa: 'alf.lin',      alt: 'halfeline'    },  // pas "half-line"
-  'halfelines':     { ipa: 'alf.lin',      alt: 'halfeline'    },  // s pluriel muet
+  'halfeline':      { ipa: 'alf.lin',      alt: 'alfeline'     },  // drop 'h' muet → meilleur XTTS
+  'halfelines':     { ipa: 'alf.lin',      alt: 'alfeline'     },  // s pluriel muet
   'face-de-lune':   { ipa: 'fasdəlyn',     alt: 'face-de-lune' },  // composé Salvatore, lu d'un trait
 
   // ── Mots rares qui font buguer le TTS ────────────────────────────────────
   'impavide':       { ipa: 'ɛ̃pavid',      alt: 'impavide'     },  // était lu "un pas vide" !
   'd’indices':      { ipa: 'dɛ̃dis',       alt: 'd’indices'    },  // était lu "d'un dix" (1+10) !!!
   'indices':        { ipa: 'ɛ̃dis',        alt: 'indices'      },  // sécurise les autres formes
-  'sine qua non':   { ipa: 'sinekwanɔn',   alt: 'sine qua non' },  // latin, pas "sinkanon"
+  'sine qua non':   { ipa: 'sinekwanɔn',   alt: 'siné kwa none' },  // latin lu en FR-phonétique → /sine kwa nɔn/
 
   // ── Liaisons critiques qui fusionnent mal ────────────────────────────────
   // "à ciel ouvert" était lu "à sel ouvert" — perte de sens totale
@@ -2525,14 +2527,16 @@ const PRONUNCIATIONS = {
   // ── Inversions Q (verbe-pronom) qui perdent leur liaison ────────────────
   // Analyse Whisper : sont-ils 2x ePub, 0 Whisper → la liaison /t/ est perdue
   // ou l'hyphen produit une coupure. On force la liaison via IPA.
-  'sont-ils':       { ipa: 'sɔ̃til',       alt: 'sontils'      },  // était lu "sont ils" séparé
-  'sont-elles':     { ipa: 'sɔ̃tɛl',       alt: 'sontelles'    },
-  'ont-ils':        { ipa: 'ɔ̃til',        alt: 'ontils'       },
-  'ont-elles':      { ipa: 'ɔ̃tɛl',        alt: 'ontelles'     },
-  'vont-ils':       { ipa: 'vɔ̃til',       alt: 'vontils'      },
-  'vont-elles':     { ipa: 'vɔ̃tɛl',       alt: 'vontelles'    },
-  'peuvent-ils':    { ipa: 'pœvtil',      alt: 'peuventils'   },
-  'doivent-ils':    { ipa: 'dwavtil',     alt: 'doiventils'   },
+  // Note : alt utilise 't' agglutiné au pronom suivant pour forcer la liaison
+  // sans pause (problème inverse de l'hyphen qui crée une rupture).
+  'sont-ils':       { ipa: 'sɔ̃til',       alt: 'son-tils'     },  // hyphen interne → eSpeak prononce /t/ liaison
+  'sont-elles':     { ipa: 'sɔ̃tɛl',       alt: 'son-telles'   },
+  'ont-ils':        { ipa: 'ɔ̃til',        alt: 'on-tils'      },
+  'ont-elles':      { ipa: 'ɔ̃tɛl',        alt: 'on-telles'    },
+  'vont-ils':       { ipa: 'vɔ̃til',       alt: 'von-tils'     },
+  'vont-elles':     { ipa: 'vɔ̃tɛl',       alt: 'von-telles'   },
+  'peuvent-ils':    { ipa: 'pœvtil',      alt: 'peuvent-tils' },
+  'doivent-ils':    { ipa: 'dwavtil',     alt: 'doivent-tils' },
 
   // ── Bregan D'aerthe : composé à gérer comme une unité ───────────────────
   // L'enchaînement "Bregan" + élision "D'aerthe" (substitué en "Dersse") devient
@@ -2550,23 +2554,23 @@ const PRONUNCIATIONS = {
   'Melniboné':      { ipa: 'mɛlnibɔne',    alt: 'Melniboné'    },  // était lu "Melny Bonnet" en deux mots
   'Melniboné.':     { ipa: 'mɛlnibɔne',    alt: 'Melniboné'    },  // variante fin de phrase
   'melnibonéen':    { ipa: 'mɛlnibɔneɛ̃',  alt: 'melnibonéen'  },  // adjectif
-  'Quarzhasaat':    { ipa: 'kwaʁzasat',    alt: 'Quarzasaat'   },  // était lu "Kwarza Saat" / "Quarzassat" / "Quarzazate" (3 variantes !)
-  'Quarzhazaat':    { ipa: 'kwaʁzasat',    alt: 'Quarzasaat'   },  // variante orthographique
-  'Yyrkoon':        { ipa: 'jiʁkun',       alt: 'Yirkoune'     },  // était lu "Irkoun" / "Yirkun"
-  'Rackhir':        { ipa: 'ʁakiʁ',        alt: 'Rakir'        },  // kh → k, r final muet
-  'Filkhar':        { ipa: 'filkaʁ',       alt: 'Filkar'       },  // était lu "Filcar"
-  'Tanelorne':      { ipa: 'tanəlɔʁn',     alt: 'Tanelorne'    },  // était lu "Tannélorme"
-  'Karlaak':        { ipa: 'kaʁlak',       alt: 'Karlaak'      },  // était lu "Carlac"
-  'Ufych-Sormeer':  { ipa: 'yfiksɔʁmeʁ',   alt: 'Ufyk-Sormeer' },  // était lu "Uffich-Sormer"
-  'Actorios':       { ipa: 'aktɔʁjɔs',     alt: 'Actorios'     },  // l'Actorios — liaison cassée → "Lactorios"
-  'albinos':        { ipa: 'albinos',      alt: 'albinos'      },  // s final pronouncé (pas muet)
+  'Quarzhasaat':    { ipa: 'kwaʁzasat',    alt: 'Kwarzazate'   },  // 'qu' lu /k/, ré-écrit FR-phonétique
+  'Quarzhazaat':    { ipa: 'kwaʁzasat',    alt: 'Kwarzazate'   },
+  'Yyrkoon':        { ipa: 'jiʁkun',       alt: 'Yirkoune'     },  // OK FR
+  'Rackhir':        { ipa: 'ʁakiʁ',        alt: 'Rakire'       },  // -ire force /ʁ/ final lisible
+  'Filkhar':        { ipa: 'filkaʁ',       alt: 'Filkar'       },  // OK FR
+  'Tanelorne':      { ipa: 'tanəlɔʁn',     alt: 'Tanelorne'    },  // OK FR
+  'Karlaak':        { ipa: 'kaʁlak',       alt: 'Karlak'       },  // drop 'aa' double inhabituel
+  'Ufych-Sormeer':  { ipa: 'yfiksɔʁmeʁ',   alt: 'Ufyk-Sormère' }, // -eer anglais → -ère FR
+  'Actorios':       { ipa: 'aktɔʁjɔs',     alt: 'Actorios'     },  // OK FR
+  'albinos':        { ipa: 'albinos',      alt: 'albinosse'    },  // -osse force le /s/ final
 
   // ── Entrées <lang> : prononciation dans une autre langue ─────────────────
-  // Noms d'épées Elric prononcés à l'anglaise. Sur Chirp3 (qui ne supporte
-  // pas <lang>), mon sanitizer strippe le tag et Google lit l'alt avec
-  // phonétique française — fallback acceptable.
-  'Stormbringer':   { lang: 'en-GB', alt: 'Stormbringer' },
-  'Mournblade':     { lang: 'en-GB', alt: 'Mournblade'   },
+  // Noms d'épées Elric prononcés à l'anglaise. Pour Chirp3/Piper/XTTS qui
+  // strippent <lang>, l'alt est lu en FR → on donne une transcription
+  // FR-phonétique approchant la prononciation EN originale.
+  'Stormbringer':   { lang: 'en-GB', alt: 'Stormebringueur' },  // /stɔʁm.bʁin.ɡœʁ/ ≈ EN /ˈstɔːmbrɪŋə/
+  'Mournblade':     { lang: 'en-GB', alt: 'Mornblède'       },  // /mɔʁn.blɛd/ ≈ EN /ˈmɔːnbleɪd/
 
   // ── Verbes avec élision : on aiguille Chirp3 vers un mot français RÉEL ───
   // Chirp3 segmente "l'échapper" et "léchapper" parce que l'infinitif après
