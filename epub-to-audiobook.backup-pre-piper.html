@@ -1,0 +1,3512 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ÉpubSon — Convertisseur Livre Audio</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap');
+
+:root {
+  --void: #080608;
+  --deep: #100e12;
+  --surface: #18151c;
+  --lift: #221e28;
+  --border: rgba(255,255,255,0.07);
+  --border-hi: rgba(255,255,255,0.14);
+  --ink: #d4cfe0;
+  --ink-dim: #7a7385;
+  --ink-faint: #3d3845;
+  --accent: #c084fc;
+  --accent2: #a855f7;
+  --accent-glow: rgba(192,132,252,0.15);
+  --green: #86efac;
+  --green-dim: rgba(134,239,172,0.15);
+  --red: #fca5a5;
+  --red-dim: rgba(252,165,165,0.1);
+  --amber: #fcd34d;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 300;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* grain */
+body::after {
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:999;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+}
+
+.wrap {
+  width:100%; max-width:680px;
+  padding:0 24px 80px;
+  display:flex; flex-direction:column; gap:0;
+}
+
+/* ── header ── */
+header {
+  padding:52px 0 40px;
+  border-bottom:1px solid var(--border);
+  margin-bottom:36px;
+}
+
+.logo-row {
+  display:flex; align-items:center; gap:14px; margin-bottom:8px;
+}
+
+.logo-icon {
+  width:42px; height:42px;
+  background:linear-gradient(135deg, var(--accent), #7c3aed);
+  border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:20px;
+  box-shadow:0 0 28px rgba(168,85,247,0.35);
+}
+
+.logo-text {
+  font-family:'DM Serif Display', serif;
+  font-size:26px; color:#fff;
+  letter-spacing:-0.02em;
+}
+
+.logo-text span { color: var(--accent); }
+
+.tagline { font-size:13px; color:var(--ink-dim); letter-spacing:0.03em; margin-top:4px; }
+
+/* ── card ── */
+.card {
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:28px;
+  margin-bottom:16px;
+}
+
+.card-title {
+  font-family:'DM Serif Display', serif;
+  font-size:15px; color:#fff; margin-bottom:4px;
+}
+
+.card-sub { font-size:12px; color:var(--ink-dim); line-height:1.5; margin-bottom:16px; }
+.card-sub a { color:var(--accent); text-decoration:none; }
+.card-sub a:hover { text-decoration:underline; }
+
+/* inputs */
+.input-row { display:flex; gap:8px; }
+
+.inp {
+  flex:1;
+  background:var(--lift);
+  border:1px solid var(--border);
+  border-radius:8px;
+  color:#fff;
+  font-family:'DM Sans', sans-serif;
+  font-size:13px;
+  padding:10px 14px;
+  outline:none;
+  transition:border-color 0.2s;
+}
+
+.inp:focus { border-color:rgba(192,132,252,0.5); }
+.inp::placeholder { color:var(--ink-faint); }
+
+.btn-primary {
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none; border-radius:8px;
+  color:#fff; font-family:'DM Sans',sans-serif; font-weight:500;
+  font-size:13px; padding:10px 18px; cursor:pointer;
+  transition:all 0.2s; white-space:nowrap;
+  box-shadow:0 0 16px rgba(168,85,247,0.25);
+}
+
+.btn-primary:hover { opacity:0.88; transform:translateY(-1px); }
+.btn-primary:disabled { opacity:0.4; cursor:not-allowed; transform:none; }
+
+.msg { font-size:12px; margin-top:8px; }
+.msg.ok  { color:var(--green); }
+.msg.err { color:var(--red); }
+
+/* voice grid */
+.voice-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px;
+}
+
+.voice-card {
+  padding:10px 12px;
+  background:var(--lift); border:1px solid var(--border);
+  border-radius:8px; cursor:pointer; transition:all 0.18s;
+  position:relative;
+}
+
+.voice-card:hover { border-color:var(--border-hi); }
+.voice-card.sel { border-color:var(--accent); background:rgba(192,132,252,0.07); }
+
+.vc-name { font-size:13px; color:#fff; margin-bottom:2px; }
+.vc-meta { font-size:11px; color:var(--ink-dim); }
+
+.vc-test-btn {
+  position:absolute; top:8px; right:8px;
+  background:rgba(255,255,255,0.06); border:1px solid var(--border);
+  color:var(--ink); padding:4px 8px; border-radius:6px;
+  font-size:11px; cursor:pointer; transition:all 0.15s;
+  z-index:2;
+}
+.vc-test-btn:hover  { background:rgba(192,132,252,0.15); border-color:var(--accent); }
+.vc-test-btn:disabled { opacity:0.5; cursor:wait; }
+.vc-test-btn.playing { background:rgba(134,239,172,0.2); border-color:var(--green); color:var(--green); }
+
+.tag {
+  display:inline-block; font-size:9px; letter-spacing:0.08em;
+  text-transform:uppercase; padding:1px 5px; border-radius:4px;
+  margin-left:5px; vertical-align:middle;
+}
+
+.tag.n2   { background:rgba(192,132,252,0.2); color:var(--accent); }
+.tag.wn   { background:rgba(134,239,172,0.15); color:var(--green); }
+.tag.std  { background:rgba(125,211,252,0.15); color:#7dd3fc; }
+.tag.c3hd { background:rgba(252,165,165,0.15); color:#fca5a5; }
+
+/* drop zone */
+#dropzone {
+  display:none;
+  border:1px dashed rgba(192,132,252,0.3);
+  border-radius:12px; padding:44px 24px;
+  text-align:center; cursor:pointer;
+  transition:all 0.25s; margin-bottom:16px;
+  background:rgba(192,132,252,0.02);
+  position:relative; overflow:hidden;
+}
+
+#dropzone::before {
+  content:''; position:absolute; inset:0;
+  background:radial-gradient(ellipse 70% 70% at 50% 50%, rgba(192,132,252,0.06), transparent);
+  opacity:0; transition:opacity 0.25s;
+}
+
+#dropzone:hover::before, #dropzone.over::before { opacity:1; }
+#dropzone:hover, #dropzone.over { border-color:rgba(192,132,252,0.6); }
+
+.dz-icon { font-size:36px; margin-bottom:10px; display:block; }
+.dz-title { font-family:'DM Serif Display',serif; font-size:18px; color:#fff; margin-bottom:4px; }
+.dz-sub { font-size:12px; color:var(--ink-dim); }
+#fileInput { display:none; }
+
+/* book preview */
+#bookPreview {
+  display:none;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:22px 24px;
+  margin-bottom:16px; gap:18px; align-items:flex-start;
+}
+
+.book-cover {
+  width:64px; height:86px; flex-shrink:0;
+  background:linear-gradient(135deg,var(--accent),#7c3aed);
+  border-radius:4px 8px 8px 4px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:28px;
+  box-shadow:-3px 4px 16px rgba(168,85,247,0.3), inset -2px 0 0 rgba(0,0,0,0.4);
+  position:relative; overflow:hidden;
+}
+
+.book-cover img {
+  width:100%; height:100%; object-fit:cover;
+  border-radius:inherit;
+}
+
+.book-details { flex:1; min-width:0; }
+.book-name { font-family:'DM Serif Display',serif; font-size:17px; color:#fff; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.book-author { font-size:12px; color:var(--ink-dim); margin-bottom:10px; }
+
+.book-stats {
+  display:flex; gap:12px; flex-wrap:wrap;
+}
+
+.stat { font-size:11px; color:var(--ink-dim); }
+.stat strong { color:var(--ink); font-weight:500; }
+
+/* chapter list */
+.chapter-list {
+  max-height:160px; overflow-y:auto;
+  margin-top:10px; display:flex; flex-direction:column; gap:4px;
+}
+
+.chapter-list::-webkit-scrollbar { width:3px; }
+.chapter-list::-webkit-scrollbar-thumb { background:var(--border-hi); border-radius:2px; }
+
+.ch-item {
+  display:flex; align-items:center; gap:8px;
+  padding:6px 8px; border-radius:6px;
+  background:var(--lift); cursor:pointer;
+  transition:background 0.15s;
+}
+
+.ch-item:hover { background:var(--lift); }
+.ch-item input[type=checkbox] { accent-color:var(--accent); width:13px; height:13px; cursor:pointer; }
+.ch-item-name { font-size:12px; color:var(--ink); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ch-item-words { font-size:11px; color:var(--ink-dim); flex-shrink:0; }
+
+.sel-row { display:flex; gap:8px; margin-bottom:8px; }
+.btn-sm {
+  font-size:11px; padding:4px 10px; background:var(--lift);
+  border:1px solid var(--border); border-radius:6px;
+  color:var(--ink-dim); cursor:pointer; transition:all 0.15s;
+}
+.btn-sm:hover { color:var(--ink); border-color:var(--border-hi); }
+
+/* convert btn — visibilité contrôlée par son parent #actionRow */
+#convertBtn {
+  width:100%; padding:16px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none; border-radius:10px;
+  color:#fff; font-family:'DM Sans',sans-serif;
+  font-weight:500; font-size:15px; cursor:pointer;
+  box-shadow:0 0 32px rgba(168,85,247,0.3);
+  transition:all 0.2s; margin-bottom:0;
+}
+
+#convertBtn:hover { opacity:0.9; box-shadow:0 0 44px rgba(168,85,247,0.45); }
+#convertBtn:disabled { opacity:0.35; cursor:not-allowed; }
+
+/* progress panel */
+#progressPanel {
+  display:none;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:28px;
+  margin-bottom:16px;
+}
+
+.prog-header {
+  display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;
+}
+
+.prog-title { font-family:'DM Serif Display',serif; font-size:16px; color:#fff; }
+.prog-pct   { font-size:22px; font-weight:500; color:var(--accent); letter-spacing:-0.02em; }
+
+.prog-bar-wrap {
+  width:100%; height:6px; background:var(--lift);
+  border-radius:3px; overflow:hidden; margin-bottom:6px;
+}
+
+.prog-bar {
+  height:100%;
+  background:linear-gradient(90deg,var(--accent2),var(--accent),#e879f9);
+  border-radius:3px; width:0%;
+  transition:width 0.4s ease;
+  box-shadow:0 0 10px rgba(192,132,252,0.5);
+}
+
+.prog-sub { font-size:11px; color:var(--ink-dim); margin-bottom:20px; }
+
+/* phase steps */
+.phases { display:flex; flex-direction:column; gap:10px; }
+
+.phase {
+  display:flex; align-items:center; gap:12px;
+  padding:10px 14px;
+  background:var(--lift); border-radius:8px;
+  border:1px solid var(--border);
+  transition:all 0.3s;
+}
+
+.phase.active { border-color:rgba(192,132,252,0.35); background:rgba(192,132,252,0.06); }
+.phase.done   { border-color:rgba(134,239,172,0.25); background:rgba(134,239,172,0.04); }
+.phase.error  { border-color:rgba(252,165,165,0.25); background:var(--red-dim); }
+
+.phase-icon {
+  width:28px; height:28px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:13px; flex-shrink:0;
+  background:var(--surface); border:1px solid var(--border);
+}
+
+.phase.active .phase-icon { border-color:var(--accent); animation:spin 1.2s linear infinite; }
+.phase.done .phase-icon   { background:var(--green-dim); border-color:rgba(134,239,172,0.4); }
+.phase.error .phase-icon  { background:var(--red-dim);   border-color:rgba(252,165,165,0.4); }
+
+@keyframes spin { to { transform:rotate(360deg); } }
+
+.phase-info { flex:1; }
+.phase-name { font-size:13px; color:var(--ink); }
+.phase-detail { font-size:11px; color:var(--ink-dim); margin-top:1px; }
+
+.phase-bar-wrap { width:80px; height:3px; background:var(--surface); border-radius:2px; flex-shrink:0; }
+.phase-bar { height:100%; background:var(--accent); border-radius:2px; width:0%; transition:width 0.3s; }
+
+/* log */
+.log-wrap {
+  margin-top:16px;
+  max-height:120px; overflow-y:auto;
+  background:var(--deep); border-radius:8px; padding:10px 14px;
+}
+
+.log-wrap::-webkit-scrollbar { width:3px; }
+.log-wrap::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+.log-line {
+  font-size:11px; color:var(--ink-dim); font-family:monospace;
+  line-height:1.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+.log-line.ok  { color:rgba(134,239,172,0.8); }
+.log-line.err { color:rgba(252,165,165,0.8); }
+.log-line.hi  { color:rgba(192,132,252,0.8); }
+
+/* result */
+#resultPanel {
+  display:none;
+  background:linear-gradient(135deg, rgba(134,239,172,0.06), rgba(134,239,172,0.02));
+  border:1px solid rgba(134,239,172,0.2);
+  border-radius:12px; padding:28px;
+  text-align:center; margin-bottom:16px;
+}
+
+.result-icon { font-size:44px; margin-bottom:12px; }
+.result-title { font-family:'DM Serif Display',serif; font-size:20px; color:#fff; margin-bottom:6px; }
+.result-sub { font-size:13px; color:var(--ink-dim); margin-bottom:24px; line-height:1.6; }
+
+.download-btns { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+
+.btn-dl {
+  display:inline-flex; align-items:center; gap:8px;
+  padding:12px 22px; border-radius:9px;
+  font-family:'DM Sans',sans-serif; font-size:13px; font-weight:500;
+  cursor:pointer; text-decoration:none; transition:all 0.2s;
+  border:none;
+}
+
+.btn-dl-primary {
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff; box-shadow:0 0 24px rgba(168,85,247,0.3);
+}
+
+.btn-dl-primary:hover { opacity:0.88; transform:translateY(-1px); }
+
+.btn-dl-secondary {
+  background:var(--lift); color:var(--ink);
+  border:1px solid var(--border);
+}
+
+.btn-dl-secondary:hover { border-color:var(--border-hi); color:#fff; }
+
+.btn-restart {
+  margin-top:16px; background:none; border:1px solid var(--border);
+  border-radius:8px; color:var(--ink-dim); font-family:'DM Sans',sans-serif;
+  font-size:12px; padding:8px 18px; cursor:pointer; transition:all 0.2s;
+}
+
+.btn-restart:hover { color:var(--ink); border-color:var(--border-hi); }
+
+/* abort btn */
+#abortBtn {
+  display:none; width:100%; padding:10px;
+  background:none; border:1px solid rgba(252,165,165,0.2);
+  border-radius:8px; color:var(--red); font-family:'DM Sans',sans-serif;
+  font-size:12px; cursor:pointer; margin-bottom:16px; transition:all 0.2s;
+}
+
+#abortBtn:hover { background:var(--red-dim); }
+
+.fade-in { animation:fadeIn 0.4s ease forwards; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+
+@media(max-width:500px) {
+  .voice-grid { grid-template-columns:1fr; }
+  .download-btns { flex-direction:column; }
+}
+
+/* ── Auth overlay ── */
+#authOverlay {
+  position:fixed; inset:0; z-index:9999;
+  background:var(--void);
+  display:flex; align-items:center; justify-content:center;
+}
+#authOverlay.hidden { display:none; }
+.auth-box {
+  background:var(--surface); border:1px solid var(--border-hi);
+  border-radius:16px; padding:40px 36px; width:340px; max-width:90vw;
+  display:flex; flex-direction:column; gap:18px;
+  box-shadow:0 8px 40px rgba(0,0,0,0.6);
+}
+.auth-logo { font-family:'DM Serif Display',serif; font-size:22px; color:#fff; text-align:center; }
+.auth-logo span { color:var(--accent); }
+.auth-subtitle { font-size:13px; color:var(--ink-dim); text-align:center; margin-top:-8px; }
+.auth-input {
+  background:var(--lift); border:1px solid var(--border);
+  border-radius:8px; padding:12px 14px;
+  color:var(--ink); font-size:15px; outline:none; width:100%; box-sizing:border-box;
+}
+.auth-input:focus { border-color:var(--accent); }
+.auth-btn {
+  background:var(--accent); color:#fff; border:none; border-radius:8px;
+  padding:12px; font-size:15px; font-weight:500; cursor:pointer; width:100%;
+}
+.auth-btn:hover { background:var(--accent2); }
+.auth-error { color:var(--red); font-size:13px; text-align:center; min-height:18px; }
+.auth-reset { font-size:12px; color:var(--ink-dim); text-align:center; cursor:pointer; text-decoration:underline; }
+</style>
+</head>
+<body>
+
+<!-- ── Auth overlay (affiché en premier, caché après auth) ── -->
+<div id="authOverlay">
+  <div class="auth-box">
+    <div class="auth-logo">Épub<span>Son</span></div>
+    <div class="auth-subtitle" id="authSubtitle">Accès protégé</div>
+    <input id="authInput" class="auth-input" type="password" placeholder="Mot de passe" autocomplete="current-password"/>
+    <input id="authInput2" class="auth-input" type="password" placeholder="Confirmer le mot de passe" style="display:none" autocomplete="new-password"/>
+    <button class="auth-btn" id="authBtn" onclick="submitAuth()">Entrer</button>
+    <div class="auth-error" id="authError"></div>
+    <div class="auth-reset" id="authReset" style="display:none" onclick="resetPassword()">Réinitialiser le mot de passe</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <header>
+    <div class="logo-row">
+      <div class="logo-icon">🎧</div>
+      <div class="logo-text">Épub<span>Son</span></div>
+    </div>
+    <div class="tagline">Convertisseur ePub → Livre audio · Google Neural2 + SSML IA</div>
+  </header>
+
+  <!-- BANDEAU GLOBAL CONSO GOOGLE TTS — visible en permanence -->
+  <div id="globalQuotaBanner" style="margin:0 auto 16px;max-width:900px;padding:12px 16px;background:var(--lift);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--ink-dim);line-height:1.5">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <strong style="color:var(--ink);font-size:13px">📊 Conso Google TTS</strong>
+      <span id="gqbMonth" style="opacity:.7">mois courant</span>
+      <span style="flex:1"></span>
+      <span id="gqbTotal" style="font-weight:600">— € dépensés ce mois</span>
+    </div>
+    <div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden">
+      <div id="gqbBar" style="height:100%;width:0%;background:#86efac;transition:width 0.3s,background 0.3s"></div>
+    </div>
+    <div id="gqbDetail" style="margin-top:6px;font-size:11px;opacity:.85"></div>
+  </div>
+
+  <!-- Step 1: API Keys -->
+  <div class="card" id="keysCard">
+    <div class="card-title">Clés API</div>
+    <div class="card-sub">
+      Deux clés nécessaires pour la conversion.<br>
+      <a href="https://console.cloud.google.com/apis/library/texttospeech.googleapis.com" target="_blank">→ Google Cloud TTS</a> &nbsp;·&nbsp;
+      <a href="https://console.anthropic.com" target="_blank">→ Anthropic Claude</a>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+      <div class="input-row">
+        <input class="inp" id="gcpKey" type="password" placeholder="Clé Google Cloud (AIza…)">
+      </div>
+      <div class="input-row">
+        <input class="inp" id="claudeKey" type="password" placeholder="Clé Anthropic Claude (sk-ant-…)">
+        <button class="btn-primary" onclick="validateKeys()">Valider</button>
+      </div>
+    </div>
+
+    <div id="keysMsg" class="msg"></div>
+
+    <!-- Voice picker -->
+    <div id="voicePicker" style="display:none;margin-top:16px">
+      <div style="font-size:12px;color:var(--ink-dim);margin-bottom:8px;letter-spacing:0.04em">Choisir la voix de narration</div>
+      <div class="voice-grid" id="voiceGrid"></div>
+      <!-- Toggle SSML enrichi via Claude -->
+      <label style="display:flex;align-items:center;gap:10px;margin-top:16px;padding:10px 12px;background:var(--lift);border:1px solid var(--border);border-radius:8px;cursor:pointer">
+        <input type="checkbox" id="claudeToggle" checked style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
+        <div style="flex:1">
+          <div style="font-size:13px;color:#fff">SSML enrichi via Claude</div>
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">Si désactivé : SSML simple, zéro appel API Anthropic (coût $0)</div>
+        </div>
+      </label>
+      <!-- Toggle traduction EN → FR via Claude -->
+      <label style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:10px 12px;background:var(--lift);border:1px solid var(--border);border-radius:8px;cursor:pointer">
+        <input type="checkbox" id="translateToggle" style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
+        <div style="flex:1">
+          <div style="font-size:13px;color:#fff">Traduire EN → FR via Claude</div>
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">Via Claude Haiku 4.5 (économique). Coût ~$0.50-1 par roman selon longueur.</div>
+        </div>
+      </label>
+    </div>
+  </div>
+
+  <!-- Step 2: ePub drop -->
+  <div id="dropzone">
+    <span class="dz-icon">📖</span>
+    <div class="dz-title">Déposer votre/vos fichier(s) ePub</div>
+    <div class="dz-sub">ou cliquer pour parcourir — plusieurs fichiers acceptés</div>
+    <input type="file" id="fileInput" accept=".epub" multiple>
+  </div>
+
+  <!-- Container dynamique pour les livres en queue (1 card par livre) -->
+  <div id="booksQueue"></div>
+
+  <!-- Boutons d'action quand au moins un livre est chargé -->
+  <div id="actionRow" style="display:none;flex-direction:column;gap:8px;margin-bottom:16px">
+    <button id="addMoreBtn" onclick="document.getElementById('fileInput').click()"
+            style="background:var(--lift);border:1px solid var(--border);color:var(--ink);padding:10px 14px;border-radius:8px;cursor:pointer;font-size:13px">
+      ➕ Ajouter un autre ePub à la queue
+    </button>
+    <!-- Estimation coût Google TTS -->
+    <div id="costEstimate" style="background:var(--lift);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink-dim);line-height:1.6">
+      <div id="costEstimateContent">Sélectionne au moins un chapitre pour voir l'estimation…</div>
+    </div>
+    <!-- Cache audio TTS -->
+    <div id="cachePanel" style="background:var(--lift);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink-dim);line-height:1.6;display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div id="cachePanelContent" style="flex:1">Cache audio : chargement…</div>
+      <button id="cacheClearBtn" onclick="clearTTSCacheUI()" style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">🗑 Vider</button>
+    </div>
+    <!-- Compteur mensuel + limite quota gratuit -->
+    <div id="quotaPanel" style="background:var(--lift);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink-dim);line-height:1.6">
+      <div id="quotaPanelContent">Quota mensuel : chargement…</div>
+      <div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden">
+        <div id="quotaBar" style="height:100%;width:0%;background:#86efac;transition:width 0.3s,background 0.3s"></div>
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:11px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="quotaHardBlock" onchange="saveQuotaSettings()">
+          Bloquer le dépassement du quota gratuit
+        </label>
+        <button onclick="adjustMonthlyQuota()" style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:10px">✏️ Ajuster (sync Google)</button>
+        <button onclick="resetMonthlyQuota()" style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:10px">↺ Reset mensuel</button>
+      </div>
+    </div>
+    <button id="convertBtn" onclick="startConversion()">
+      🎙 Lancer la conversion (<span id="queueCount">0</span> livre<span id="queuePlural"></span>)
+    </button>
+  </div>
+
+  <!-- Abort -->
+  <button id="abortBtn" onclick="abortConversion()">✕ Annuler la conversion</button>
+
+  <!-- Progress -->
+  <div id="progressPanel">
+    <div class="prog-header">
+      <div class="prog-title">Conversion en cours</div>
+      <div class="prog-pct" id="progPct">0%</div>
+    </div>
+    <div class="prog-bar-wrap"><div class="prog-bar" id="progBar"></div></div>
+    <div class="prog-sub" id="progSub">Initialisation…</div>
+
+    <div class="phases">
+      <div class="phase" id="ph0">
+        <div class="phase-icon">①</div>
+        <div class="phase-info">
+          <div class="phase-name">Analyse SSML — Claude</div>
+          <div class="phase-detail" id="ph0d">En attente</div>
+        </div>
+        <div class="phase-bar-wrap"><div class="phase-bar" id="ph0b"></div></div>
+      </div>
+      <div class="phase" id="ph1">
+        <div class="phase-icon">②</div>
+        <div class="phase-info">
+          <div class="phase-name">Synthèse vocale — Google Neural2</div>
+          <div class="phase-detail" id="ph1d">En attente</div>
+        </div>
+        <div class="phase-bar-wrap"><div class="phase-bar" id="ph1b"></div></div>
+      </div>
+      <div class="phase" id="ph2">
+        <div class="phase-icon">③</div>
+        <div class="phase-info">
+          <div class="phase-name">Assemblage audio</div>
+          <div class="phase-detail" id="ph2d">En attente</div>
+        </div>
+        <div class="phase-bar-wrap"><div class="phase-bar" id="ph2b"></div></div>
+      </div>
+      <div class="phase" id="ph3">
+        <div class="phase-icon">④</div>
+        <div class="phase-info">
+          <div class="phase-name">Encodage M4B & téléchargement</div>
+          <div class="phase-detail" id="ph3d">En attente</div>
+        </div>
+        <div class="phase-bar-wrap"><div class="phase-bar" id="ph3b"></div></div>
+      </div>
+    </div>
+
+    <div class="log-wrap">
+      <div id="logLines"></div>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div id="resultPanel">
+    <div class="result-icon">🎉</div>
+    <div class="result-title">Livre audio prêt !</div>
+    <div class="result-sub" id="resultDesc">—</div>
+    <div class="download-btns" id="downloadBtns"></div>
+  </div>
+
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// TARIFICATION GOOGLE TTS (déclarée en TÊTE car utilisée par le bandeau de
+// conso qui s'initialise dès le boot, AVANT que le reste du fichier exécute).
+// const en TDZ provoque ReferenceError si on accède avant la ligne de déclaration.
+// ─────────────────────────────────────────────────────────────────────────────
+function getVoiceTier(voice) {
+  if (voice.includes('Chirp3-HD'))   return { tier: 'Chirp3-HD', usdPerM: 30,  freeM: 1   };
+  if (voice.includes('Studio'))      return { tier: 'Studio',    usdPerM: 160, freeM: 0.1 };
+  if (voice.includes('Neural2'))     return { tier: 'Neural2',   usdPerM: 16,  freeM: 1   };
+  if (voice.includes('Wavenet'))     return { tier: 'WaveNet',   usdPerM: 16,  freeM: 1   };
+  if (voice.includes('Polyglot'))    return { tier: 'Polyglot',  usdPerM: 16,  freeM: 1   };
+  return                                    { tier: 'Standard',  usdPerM: 4,   freeM: 4   };
+}
+const USD_TO_EUR = 0.93;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH — hash SHA-256 codé en dur dans la source (seul le propriétaire du
+//        fichier peut modifier le mot de passe)
+//
+// Pour changer le mot de passe :
+//   1. Ouvre epub-to-audiobook.html?setup dans ton navigateur
+//   2. Entre ton nouveau mot de passe → copie le hash affiché
+//   3. Remplace la valeur de PASSWORD_HASH ci-dessous par ce hash
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ↓↓ REMPLACE PAR TON HASH (obtenu via ?setup) ↓↓
+const PASSWORD_HASH = 'ead52838909eb6864934afb2f786585385142d66821bbae74a97bb45ebce44b6';
+// ↑↑──────────────────────────────────────────↑↑
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+function initAuth() {
+  // Mode ?setup : affiche un générateur de hash (réservé au propriétaire)
+  if (new URLSearchParams(location.search).has('setup')) {
+    showSetupMode(); return;
+  }
+  if (sessionStorage.getItem('epubson_auth') === '1') { unlockApp(); return; }
+  if (!PASSWORD_HASH) {
+    document.getElementById('authSubtitle').textContent = '⚠ Application non configurée';
+    document.getElementById('authError').textContent = 'Ouvre le fichier avec ?setup pour définir un mot de passe.';
+    document.getElementById('authBtn').style.display = 'none';
+    document.getElementById('authInput').style.display = 'none';
+    return;
+  }
+  document.getElementById('authSubtitle').textContent = 'Accès protégé';
+  document.getElementById('authInput').addEventListener('keydown', e => { if (e.key==='Enter') submitAuth(); });
+  document.getElementById('authInput').focus();
+}
+
+async function submitAuth() {
+  const pwd = document.getElementById('authInput').value;
+  const err = document.getElementById('authError');
+  if ((await sha256(pwd)) === PASSWORD_HASH) {
+    sessionStorage.setItem('epubson_auth', '1');
+    unlockApp();
+  } else {
+    err.textContent = 'Mot de passe incorrect.';
+    document.getElementById('authInput').value = '';
+    document.getElementById('authInput').focus();
+  }
+}
+
+function unlockApp() {
+  document.getElementById('authOverlay').classList.add('hidden');
+}
+
+function showSetupMode() {
+  const box = document.querySelector('.auth-box');
+  box.innerHTML = `
+    <div class="auth-logo">Épub<span>Son</span></div>
+    <div class="auth-subtitle">Générateur de hash — mode configuration</div>
+    <input id="authInput" class="auth-input" type="password" placeholder="Ton nouveau mot de passe"/>
+    <button class="auth-btn" onclick="generateHash()">Générer le hash</button>
+    <div class="auth-error" id="authError"></div>
+    <div id="hashResult" style="display:none;background:var(--lift);border-radius:8px;padding:12px;font-size:11px;word-break:break-all;color:var(--ink)"></div>
+    <div style="font-size:12px;color:var(--ink-dim);text-align:center">Copie ce hash dans PASSWORD_HASH dans le source,<br>puis recharge la page sans <code>?setup</code>.</div>
+  `;
+  document.getElementById('authInput').addEventListener('keydown', e => { if (e.key==='Enter') generateHash(); });
+}
+
+async function generateHash() {
+  const pwd = document.getElementById('authInput').value;
+  if (pwd.length < 4) { document.getElementById('authError').textContent = 'Minimum 4 caractères.'; return; }
+  const h = await sha256(pwd);
+  const res = document.getElementById('hashResult');
+  res.style.display = 'block';
+  res.innerHTML = `<b>Hash à copier :</b><br><span style="color:var(--accent);user-select:all">${h}</span>`;
+  document.getElementById('authError').textContent = '';
+}
+
+window.addEventListener('DOMContentLoaded', initAuth);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VOICES
+// ─────────────────────────────────────────────────────────────────────────────
+const VOICES = [
+  // ── Standard (4 $/M, 4M gratuits/mois — recommandée pour usage régulier) ──
+  { name:'fr-FR-Standard-C', label:'Camille',   gen:'Femme', type:'std',    desc:'Standard · économique (4M gratuits/mois)' },
+  { name:'fr-FR-Standard-A', label:'Alice',     gen:'Femme', type:'std',    desc:'Standard · économique' },
+  { name:'fr-FR-Standard-E', label:'Émilie',    gen:'Femme', type:'std',    desc:'Standard · économique' },
+  { name:'fr-FR-Standard-B', label:'Bernard',   gen:'Homme', type:'std',    desc:'Standard · économique' },
+  { name:'fr-FR-Standard-D', label:'Daniel',    gen:'Homme', type:'std',    desc:'Standard · économique' },
+  // ── Neural2 ────────────────────────────────────────────────────────────────
+  { name:'fr-FR-Neural2-C', label:'Sophie',    gen:'Femme', type:'n2',     desc:'Chaleureuse & naturelle' },
+  { name:'fr-FR-Neural2-A', label:'Claire',    gen:'Femme', type:'n2',     desc:'Douce & narrative' },
+  { name:'fr-FR-Neural2-B', label:'Laurent',   gen:'Homme', type:'n2',     desc:'Grave & posé' },
+  { name:'fr-FR-Neural2-D', label:'Thomas',    gen:'Homme', type:'n2',     desc:'Clair & moderne' },
+  { name:'fr-FR-Neural2-E', label:'Élise',     gen:'Femme', type:'n2',     desc:'Expressive' },
+  // ── WaveNet ────────────────────────────────────────────────────────────────
+  { name:'fr-FR-Wavenet-C', label:'Léa',       gen:'Femme', type:'wn',     desc:'WaveNet narratif' },
+  { name:'fr-FR-Wavenet-B', label:'Marc',      gen:'Homme', type:'wn',     desc:'WaveNet grave' },
+  // ── Chirp3-HD (dernière génération — plus naturel, SSML simplifié) ─────────
+  { name:'fr-FR-Chirp3-HD-Aoede',        label:'Aoede',    gen:'Femme', type:'c3hd', desc:'Chirp3 · fluide & narrative' },
+  { name:'fr-FR-Chirp3-HD-Kore',         label:'Kore',     gen:'Femme', type:'c3hd', desc:'Chirp3 · chaleureuse' },
+  { name:'fr-FR-Chirp3-HD-Zephyr',       label:'Zephyr',   gen:'Femme', type:'c3hd', desc:'Chirp3 · aérienne & naturelle' },
+  { name:'fr-FR-Chirp3-HD-Charon',       label:'Charon',   gen:'Homme', type:'c3hd', desc:'Chirp3 · grave & posé' },
+  { name:'fr-FR-Chirp3-HD-Fenrir',       label:'Fenrir',   gen:'Homme', type:'c3hd', desc:'Chirp3 · expressif' },
+  { name:'fr-FR-Chirp3-HD-Puck',         label:'Puck',     gen:'Homme', type:'c3hd', desc:'Chirp3 · dynamique' },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+let gcpApiKey    = localStorage.getItem('epubson_gcp') || '';
+let claudeApiKey = localStorage.getItem('epubson_claude') || '';
+let selectedVoice = localStorage.getItem('epubson_voice') || 'fr-FR-Standard-C';
+// Voix premium (Chirp3-HD, Studio, etc.) verrouillées par défaut.
+// Déverrouillable via le bouton 🔓 au-dessus de la grille.
+function isPremiumVoice(name) {
+  return /Chirp3-HD|Studio/i.test(name);
+}
+function isPremiumUnlocked() {
+  return localStorage.getItem('epubson_premium_unlocked') === '1';
+}
+let chapters = [], bookMeta = {};
+// Queue de livres pour la conversion multi-ePubs. Chaque entrée :
+//   { id, title, author, coverUrl, chapters: [{title, text}] }
+let booksQueue = [];
+let aborted = false;
+// Wake Lock pour empêcher la mise en veille pendant la conversion
+let wakeLock = null;
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) {
+    console.log('[WakeLock] Non supporté par ce navigateur');
+    return false;
+  }
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    console.log('[WakeLock] ✓ Acquis — l\'écran restera allumé');
+    // Si le wake lock est libéré (perte de focus, etc.), on tente de le reprendre
+    wakeLock.addEventListener('release', () => {
+      console.log('[WakeLock] Libéré');
+      wakeLock = null;
+    });
+    // Re-acquisition automatique au retour de visibilité
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && !wakeLock && !aborted) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+          console.log('[WakeLock] Re-acquis après retour de visibilité');
+        } catch(e) { console.warn('[WakeLock] Re-acquisition échouée:', e); }
+      }
+    });
+    return true;
+  } catch(e) {
+    console.warn('[WakeLock] Échec:', e);
+    return false;
+  }
+}
+async function releaseWakeLock() {
+  if (wakeLock) {
+    try { await wakeLock.release(); } catch(_) {}
+    wakeLock = null;
+    console.log('[WakeLock] Relâché');
+  }
+}
+
+// Attend le retour du réseau (utile après reprise de veille)
+function waitForOnline() {
+  return new Promise(resolve => {
+    if (navigator.onLine) return resolve();
+    log('⏳ Hors-ligne, attente du retour du réseau…','hi');
+    window.addEventListener('online', () => {
+      log('✓ Réseau rétabli, reprise…','ok');
+      resolve();
+    }, { once: true });
+  });
+}
+let allAudioBuffers = [];   // AudioBuffer[]
+let audioCtx = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────────────────
+document.getElementById('gcpKey').value    = gcpApiKey;
+document.getElementById('claudeKey').value = claudeApiKey;
+seedQuotaIfNeeded();
+buildVoiceGrid();
+refreshGlobalQuotaBanner();
+if (gcpApiKey && claudeApiKey) showStep2();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VOICE GRID
+// ─────────────────────────────────────────────────────────────────────────────
+function buildVoiceGrid() {
+  const grid = document.getElementById('voiceGrid');
+  grid.innerHTML = '';
+  // Bandeau de verrouillage premium
+  const unlocked = isPremiumUnlocked();
+  const banner = document.createElement('div');
+  banner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:' +
+    (unlocked ? 'rgba(252,165,165,0.08)' : 'rgba(134,239,172,0.08)') +
+    ';border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);' +
+    'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px';
+  banner.innerHTML = `
+    <span>${unlocked
+      ? '🔓 <strong style="color:var(--ink)">Voix premium déverrouillées</strong> — Chirp3-HD à ~24 €/M caractères, hors quota gratuit'
+      : '🔒 <strong style="color:var(--ink)">Voix premium verrouillées</strong> — Standard recommandé (4M caractères gratuits/mois)'
+    }</span>
+    <button onclick="togglePremiumUnlock()" style="background:transparent;border:1px solid var(--border);color:var(--ink);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">${unlocked ? '🔒 Verrouiller' : '🔓 Déverrouiller'}</button>
+  `;
+  grid.appendChild(banner);
+
+  VOICES.forEach(v => {
+    const d = document.createElement('div');
+    const premium = isPremiumVoice(v.name);
+    const locked = premium && !unlocked;
+    d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
+    if (locked) {
+      d.style.opacity = '0.35';
+      d.style.cursor = 'not-allowed';
+    }
+    const tierLabel = v.type === 'n2' ? 'Neural2'
+                    : v.type === 'wn' ? 'WaveNet'
+                    : v.type === 'std' ? 'Standard'
+                    : v.type === 'c3hd' ? 'Chirp3-HD' : v.type;
+    const lockIcon = locked ? ' 🔒' : (premium ? ' 💎' : '');
+    d.innerHTML = `
+      <button class="vc-test-btn" data-voice="${v.name}" title="Écouter un extrait avec cette voix">🔊 Tester</button>
+      <div class="vc-name">${v.label}${lockIcon} <span class="tag ${v.type}">${tierLabel}</span></div>
+      <div class="vc-meta">${v.gen} · ${v.desc}</div>`;
+    // Bouton tester : capture le clic AVANT que le parent ne sélectionne
+    const testBtn = d.querySelector('.vc-test-btn');
+    testBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      testVoice(v, testBtn);
+    };
+    d.onclick = () => {
+      if (locked) {
+        if (confirm('Cette voix est facturée par Google (~24 €/M caractères pour Chirp3-HD).\n\nTon quota gratuit est épuisé jusqu\'au 1er juillet.\n\nDéverrouiller les voix premium ?')) {
+          localStorage.setItem('epubson_premium_unlocked', '1');
+          buildVoiceGrid();
+        }
+        return;
+      }
+      selectedVoice = v.name;
+      localStorage.setItem('epubson_voice', v.name);
+      buildVoiceGrid();
+      updateCostEstimate();
+      refreshCachePanel();
+      refreshQuotaPanel();
+    };
+    grid.appendChild(d);
+  });
+}
+
+// ─── Test audio d'une voix (preview court, mis en cache) ──────────────────
+// Texte court (~140 chars) → quasi-gratuit même en Chirp3-HD (~0.4 centime).
+// Servi par le cache IndexedDB existant : 2e clic = totalement gratuit.
+const VOICE_TEST_SAMPLE = `Bonjour, je serai votre narrateur pour ce livre audio. Voici un extrait pour que vous puissiez juger ma voix avant de commencer.`;
+let __currentVoiceAudio = null;
+
+async function testVoice(voice, btnEl) {
+  // Stoppe une lecture en cours si on clique sur un autre bouton
+  if (__currentVoiceAudio) {
+    __currentVoiceAudio.pause();
+    document.querySelectorAll('.vc-test-btn.playing').forEach(b => {
+      b.classList.remove('playing');
+      b.textContent = '🔊 Tester';
+    });
+    __currentVoiceAudio = null;
+  }
+  if (!gcpApiKey) {
+    alert('Saisis ta clé Google Cloud d\'abord.');
+    return;
+  }
+  const originalText = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.textContent = '⏳ Génération…';
+  try {
+    // Bascule temporaire de selectedVoice le temps de l'appel (googleTTS l'utilise)
+    const savedVoice = selectedVoice;
+    selectedVoice = voice.name;
+    const chirp3 = isChirp3(voice.name);
+    const sampleText = `Bonjour, je m'appelle ${voice.label}. ${VOICE_TEST_SAMPLE}`;
+    const ssml = chirp3
+      ? `<speak>${sampleText}</speak>`
+      : `<speak><prosody rate="1.0">${sampleText}</prosody></speak>`;
+    const audioBuffer = await googleTTS(ssml, 3);
+    selectedVoice = savedVoice;
+
+    // Décodage WAV (LINEAR16 44.1kHz) → blob playable
+    const blob = new Blob([audioBuffer], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    __currentVoiceAudio = audio;
+    btnEl.textContent = '⏸ En lecture';
+    btnEl.classList.add('playing');
+    audio.onended = () => {
+      btnEl.textContent = originalText;
+      btnEl.classList.remove('playing');
+      btnEl.disabled = false;
+      URL.revokeObjectURL(url);
+      if (__currentVoiceAudio === audio) __currentVoiceAudio = null;
+    };
+    audio.onerror = () => {
+      btnEl.textContent = '✗ Erreur';
+      btnEl.classList.remove('playing');
+      setTimeout(() => { btnEl.textContent = originalText; btnEl.disabled = false; }, 2000);
+    };
+    await audio.play();
+    btnEl.disabled = false;  // permet de re-cliquer pour stopper
+    btnEl.onclick = (ev) => {
+      ev.stopPropagation();
+      audio.pause();
+      audio.onended();
+    };
+    // Rafraîchit les panneaux quota/cache (si nouveau cache miss → compteur +)
+    refreshGlobalQuotaBanner();
+    refreshCachePanel?.();
+  } catch (e) {
+    console.error('[testVoice]', e);
+    btnEl.textContent = '✗ ' + (e.message || 'Erreur');
+    btnEl.classList.remove('playing');
+    setTimeout(() => { btnEl.textContent = originalText; btnEl.disabled = false; }, 3000);
+  }
+}
+
+function togglePremiumUnlock() {
+  if (isPremiumUnlocked()) {
+    localStorage.setItem('epubson_premium_unlocked', '0');
+    // Si on était sur une voix premium → bascule vers Standard
+    if (isPremiumVoice(selectedVoice)) {
+      selectedVoice = 'fr-FR-Standard-C';
+      localStorage.setItem('epubson_voice', selectedVoice);
+    }
+  } else {
+    if (!confirm('Déverrouiller les voix premium ?\n\nChirp3-HD = ~24 €/M caractères TTC, sans crédit gratuit restant ce mois.')) return;
+    localStorage.setItem('epubson_premium_unlocked', '1');
+  }
+  buildVoiceGrid();
+  updateCostEstimate();
+  refreshCachePanel();
+  refreshQuotaPanel();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KEYS VALIDATION
+// ─────────────────────────────────────────────────────────────────────────────
+function validateKeys() {
+  const gcp    = document.getElementById('gcpKey').value.trim();
+  const claude = document.getElementById('claudeKey').value.trim();
+  const msg    = document.getElementById('keysMsg');
+
+  if (!gcp || !claude) { msg.className='msg err'; msg.textContent='Entrez les deux clés.'; return; }
+  if (!gcp.startsWith('AIza')) { msg.className='msg err'; msg.textContent='✗ La clé Google doit commencer par AIza…'; return; }
+  if (!claude.startsWith('sk-ant-')) { msg.className='msg err'; msg.textContent='✗ La clé Anthropic doit commencer par sk-ant-…'; return; }
+
+  gcpApiKey    = gcp;
+  claudeApiKey = claude;
+  localStorage.setItem('epubson_gcp', gcp);
+  localStorage.setItem('epubson_claude', claude);
+  msg.className='msg ok'; msg.textContent='✓ Clés enregistrées — chargez votre ePub ci-dessous';
+  document.getElementById('voicePicker').style.display = 'block';
+  showStep2();
+}
+
+function showStep2() {
+  document.getElementById('voicePicker').style.display = 'block';
+  // Restaure le toggle Claude depuis localStorage (par défaut activé)
+  const claudeToggle = document.getElementById('claudeToggle');
+  const stored = localStorage.getItem('epubson_use_claude');
+  claudeToggle.checked = stored === null ? true : stored === '1';
+  claudeToggle.onchange = () => {
+    localStorage.setItem('epubson_use_claude', claudeToggle.checked ? '1' : '0');
+  };
+  // Restaure le toggle traduction (par défaut désactivé pour ne pas surprendre)
+  const trToggle = document.getElementById('translateToggle');
+  const trStored = localStorage.getItem('epubson_translate');
+  trToggle.checked = trStored === '1';
+  trToggle.onchange = () => {
+    localStorage.setItem('epubson_translate', trToggle.checked ? '1' : '0');
+  };
+  const dz = document.getElementById('dropzone');
+  dz.style.display = 'block'; dz.classList.add('fade-in');
+  setupDrop();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EPUB DROP
+// ─────────────────────────────────────────────────────────────────────────────
+function setupDrop() {
+  const dz = document.getElementById('dropzone');
+  const fi = document.getElementById('fileInput');
+  dz.addEventListener('click', () => fi.click());
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('over');
+    loadMultipleEpubs([...e.dataTransfer.files]);
+  });
+  fi.addEventListener('change', e => loadMultipleEpubs([...e.target.files]));
+}
+
+async function loadMultipleEpubs(files) {
+  const validFiles = files.filter(f => f && f.name.endsWith('.epub'));
+  if (validFiles.length === 0) { alert('Au moins un fichier .epub est requis.'); return; }
+  for (const file of validFiles) {
+    await loadEpub(file);
+  }
+  // Reset l'input pour permettre de re-sélectionner les mêmes fichiers
+  document.getElementById('fileInput').value = '';
+}
+
+async function loadEpub(file) {
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const book = await parseEpub(zip);
+    book.id = 'book_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+    // Fallback Internet si pas de cover dans l'ePub
+    if (!book.coverUrl) {
+      console.log(`[Cover] Pas de cover dans l'ePub pour "${book.title}" → recherche Internet…`);
+      const internetCover = await fetchCoverFromInternet(book.title, book.author);
+      if (internetCover) {
+        book.coverUrl = internetCover;
+        console.log(`[Cover] ✓ Trouvée sur Internet : ${internetCover}`);
+        // Télécharge les bytes pour pouvoir les embarquer dans le M4B
+        try {
+          const resp = await fetch(internetCover);
+          if (resp.ok) {
+            book.coverBytes = new Uint8Array(await resp.arrayBuffer());
+            book.coverMimeType = resp.headers.get('content-type') || 'image/jpeg';
+          }
+        } catch(e) { console.warn('[Cover] download bytes failed:', e); }
+      } else {
+        console.log(`[Cover] ✗ Aucune cover trouvée pour "${book.title}"`);
+      }
+    }
+    booksQueue.push(book);
+    // Pour rétro-compatibilité avec startConversion qui lit chapters/bookMeta :
+    bookMeta = book;
+    chapters = book.chapters;
+    renderBooksQueue();
+  } catch(e) {
+    console.error(e);
+    alert(`Erreur de lecture de "${file.name}" : ${e.message}`);
+  }
+}
+
+// Recherche d'une cover sur Internet à partir du titre + auteur.
+// Sources interrogées en cascade : Google Books API → Open Library.
+// Pas besoin de clé API pour ces deux services en mode lecture.
+async function fetchCoverFromInternet(title, author) {
+  // Google Books d'abord (meilleur catalogue francophone)
+  try {
+    const q = `intitle:${title}${author && author !== 'Auteur inconnu' ? ` inauthor:${author.split(/[,;&]/)[0].trim()}` : ''}`;
+    const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=3&printType=books`;
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const data = await resp.json();
+      for (const item of (data.items || [])) {
+        const links = item.volumeInfo?.imageLinks;
+        const thumb = links?.thumbnail || links?.smallThumbnail;
+        if (thumb) {
+          // Upgrade http→https, retire le edge=curl, zoom=1 (haute résolution)
+          return thumb.replace(/^http:/, 'https:').replace(/&edge=curl/, '').replace(/&zoom=\d/, '');
+        }
+      }
+    }
+  } catch (e) { console.warn('[Cover] Google Books error:', e); }
+
+  // Fallback Open Library
+  try {
+    const q = encodeURIComponent(title);
+    const url = `https://openlibrary.org/search.json?title=${q}&limit=3`;
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const data = await resp.json();
+      for (const doc of (data.docs || [])) {
+        if (doc.cover_i) {
+          return `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`;
+        }
+      }
+    }
+  } catch (e) { console.warn('[Cover] Open Library error:', e); }
+
+  return null;
+}
+
+// Rendu de la queue : une card par livre, chacune avec ses chapitres éditables
+function renderBooksQueue() {
+  const container = document.getElementById('booksQueue');
+  container.innerHTML = '';
+  booksQueue.forEach((book, bi) => {
+    const totalWords = book.chapters.reduce((a,c) => a + c.text.split(/\s+/).length, 0);
+    const estMin = Math.round(totalWords / 130);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.cssText = 'margin-bottom:12px';
+    card.dataset.bookIdx = bi;
+    card.innerHTML = `
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        <div class="book-cover" style="width:48px;height:64px;font-size:20px">${book.coverUrl ? `<img src="${book.coverUrl}">` : '📚'}</div>
+        <div style="flex:1;min-width:0">
+          <div class="book-name" style="font-size:15px">${book.title}</div>
+          <div class="book-author">${book.author}</div>
+          <div class="book-stats" style="margin-top:6px">
+            <div class="stat"><strong>${book.chapters.length}</strong> ch.</div>
+            <div class="stat"><strong>${totalWords.toLocaleString('fr')}</strong> mots</div>
+            <div class="stat">~<strong>${estMin}</strong> min</div>
+          </div>
+        </div>
+        <button onclick="removeBookFromQueue(${bi})" style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:4px 8px" title="Retirer ce livre">✕</button>
+      </div>
+      <div style="margin-top:10px">
+        <div style="font-size:11px;color:var(--ink-dim);margin-bottom:6px">CHAPITRES (clic pour éditer le titre, ↑↓ pour réordonner)</div>
+        <div class="sel-row">
+          <button class="btn-sm" onclick="selectAllInBook(${bi}, true)">Tout sélectionner</button>
+          <button class="btn-sm" onclick="selectAllInBook(${bi}, false)">Tout désélectionner</button>
+        </div>
+        <div class="chapter-list" id="chapterList_${bi}"></div>
+      </div>
+    `;
+    container.appendChild(card);
+    renderChapterListForBook(bi);
+  });
+  // Bouton et compteur d'actions
+  const row = document.getElementById('actionRow');
+  if (booksQueue.length > 0) {
+    row.style.display = 'flex';
+    document.getElementById('queueCount').textContent = booksQueue.length;
+    document.getElementById('queuePlural').textContent = booksQueue.length > 1 ? 's' : '';
+  } else {
+    row.style.display = 'none';
+  }
+  updateCostEstimate();
+  refreshCachePanel();
+  refreshQuotaPanel();
+}
+
+// ─── Estimation de coût Google TTS avant lancement ────────────────────────
+function updateCostEstimate() {
+  const el = document.getElementById('costEstimateContent');
+  if (!el) return;
+  let totalChars = 0;
+  let totalChapters = 0;
+  booksQueue.forEach((book, bi) => {
+    book.chapters.forEach((ch, i) => {
+      const cb = document.getElementById(`ch_${bi}_${i}`);
+      if (cb && cb.checked) {
+        totalChars += ch.text.length;
+        totalChapters++;
+      }
+    });
+  });
+  if (totalChars === 0) {
+    el.innerHTML = `Sélectionne au moins un chapitre pour voir l'estimation…`;
+    return;
+  }
+  const { tier, usdPerM, freeM } = getVoiceTier(selectedVoice);
+  const freeChars = freeM * 1_000_000;
+  const billableChars = Math.max(0, totalChars - freeChars);
+  const grossUsd = (totalChars / 1_000_000) * usdPerM;
+  const netUsd   = (billableChars / 1_000_000) * usdPerM;
+  const grossEur = grossUsd * USD_TO_EUR;
+  const netEur   = netUsd * USD_TO_EUR;
+
+  const sign = netEur < 0.5 ? '🟢' : netEur < 5 ? '🟡' : netEur < 20 ? '🟠' : '🔴';
+  const charsFmt = totalChars.toLocaleString('fr');
+  const freeFmt = freeChars.toLocaleString('fr');
+
+  el.innerHTML = `
+    <strong style="color:var(--ink)">💰 Estimation Google TTS</strong> &nbsp;·&nbsp;
+    ${totalChapters} chapitre${totalChapters>1?'s':''} sélectionné${totalChapters>1?'s':''} &nbsp;·&nbsp;
+    <strong>${charsFmt}</strong> caractères<br>
+    Voix <strong>${tier}</strong> · ${usdPerM} $/M après quota gratuit (${freeFmt}/mois)<br>
+    Coût brut : <strong>${grossEur.toFixed(2)} €</strong>
+    &nbsp;→&nbsp; Si quota gratuit non entamé ce mois : ${sign} <strong style="color:var(--ink)">${netEur.toFixed(2)} €</strong>
+    <br><span style="font-size:10px;opacity:.7">⚠ Si tu as déjà converti d'autres livres ce mois-ci, le quota gratuit est probablement épuisé — utilise alors la valeur "coût brut".</span>
+  `;
+}
+
+// ─── Cache audio TTS — UI ────────────────────────────────────────────────
+async function refreshCachePanel() {
+  const el = document.getElementById('cachePanelContent');
+  if (!el) return;
+  const stats = await ttsCacheStats();
+  const mb = (stats.bytes / 1024 / 1024).toFixed(1);
+  const { usdPerM } = getVoiceTier(selectedVoice);
+  const cachedEur = ((stats.chars / 1_000_000) * usdPerM * USD_TO_EUR).toFixed(2);
+  const savedSessionEur = ((__ttsCacheStats.savedChars / 1_000_000) * usdPerM * USD_TO_EUR).toFixed(2);
+  el.innerHTML = `
+    <strong style="color:var(--ink)">💾 Cache audio TTS</strong> &nbsp;·&nbsp;
+    <strong>${stats.count.toLocaleString('fr')}</strong> entrées · <strong>${mb} Mo</strong> ·
+    ${stats.chars.toLocaleString('fr')} caractères stockés<br>
+    Économie totale potentielle si tout est ré-encodé : ~<strong>${cachedEur} €</strong>
+    ${__ttsCacheStats.hits || __ttsCacheStats.misses ? ` · Session : <strong>${__ttsCacheStats.hits}</strong> hits / <strong>${__ttsCacheStats.misses}</strong> miss → économisé <strong>${savedSessionEur} €</strong>` : ''}
+    <br><span style="font-size:10px;opacity:.7">Persistant entre sessions. Une modif de la voix, d'une phrase ou des paramètres TTS invalide l'entrée correspondante.</span>
+  `;
+}
+
+async function clearTTSCacheUI() {
+  if (!confirm('Vider tout le cache audio TTS ? Les prochaines conversions seront refacturées par Google.')) return;
+  await ttsCacheClear();
+  await refreshCachePanel();
+}
+
+// ─── Compteur mensuel de caractères facturés à Google ────────────────────
+// Stocké par mois (YYYY-MM) ET par tier de voix, car les quotas gratuits
+// sont indépendants (Chirp3-HD 1M, Neural2 1M, Standard 4M, Studio 100K).
+function currentMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+function quotaStoreKey(tier, month) {
+  return `epubson_chars_${month}_${tier}`;
+}
+function getMonthlyChars(tier) {
+  return parseInt(localStorage.getItem(quotaStoreKey(tier, currentMonthKey())) || '0', 10);
+}
+function addMonthlyChars(tier, n) {
+  const k = quotaStoreKey(tier, currentMonthKey());
+  const v = parseInt(localStorage.getItem(k) || '0', 10) + n;
+  localStorage.setItem(k, String(v));
+  return v;
+}
+function isHardBlockEnabled() {
+  return localStorage.getItem('epubson_quota_hardblock') === '1';
+}
+function saveQuotaSettings() {
+  const cb = document.getElementById('quotaHardBlock');
+  localStorage.setItem('epubson_quota_hardblock', cb.checked ? '1' : '0');
+}
+function resetMonthlyQuota() {
+  if (!confirm('Réinitialiser le compteur mensuel à 0 ? À faire si tu sais que Google a fait son reset.')) return;
+  // Reset toutes les tiers pour le mois courant
+  ['Chirp3-HD','Studio','Neural2','WaveNet','Polyglot','Standard'].forEach(t => {
+    localStorage.removeItem(quotaStoreKey(t, currentMonthKey()));
+  });
+  refreshQuotaPanel();
+}
+
+// Permet de synchroniser le compteur local avec la valeur exacte affichée
+// par Google Cloud Console (Facturation → Rapports → SKU Chirp3-HD voices).
+function adjustMonthlyQuota() {
+  const { tier } = getVoiceTier(selectedVoice);
+  const current = getMonthlyChars(tier);
+  const val = prompt(
+    `Synchroniser le compteur ${tier} pour le mois ${currentMonthKey()} avec Google Cloud Console.\n\n` +
+    `Va dans Console → Facturation → Rapports → filtre SKU "Count of characters for ${tier} voices",\n` +
+    `et copie la valeur "Utilisation" (en nombre de caractères).\n\n` +
+    `Valeur actuelle (locale) : ${current.toLocaleString('fr')}\n` +
+    `Nouvelle valeur :`,
+    String(current)
+  );
+  if (val === null) return;
+  const n = parseInt(val.replace(/[^0-9]/g, ''), 10);
+  if (isNaN(n) || n < 0) { alert('Valeur invalide.'); return; }
+  localStorage.setItem(quotaStoreKey(tier, currentMonthKey()), String(n));
+  refreshQuotaPanel();
+}
+
+// Seed initial du compteur — exécuté une seule fois par version (flag versionné).
+// Permet d'aligner le compteur local sur la consommation Google déjà engagée.
+// Active aussi automatiquement les protections (hard-block + verrouillage premium)
+// car le crédit gratuit est complètement épuisé.
+function seedQuotaIfNeeded() {
+  const SEED_VERSION = 'v2-202606';
+  if (localStorage.getItem('epubson_quota_seed') === SEED_VERSION) return;
+  // Valeurs constatées sur Google Cloud Console le 2026-06-07 :
+  // SKU "Count of characters for Chirp3-HD voices" = 15 543 942 caractères
+  // Crédit FreeTrialUpgrade entièrement consommé (0,00 € restant)
+  const seedMonth = '2026-06';
+  localStorage.setItem(quotaStoreKey('Chirp3-HD', seedMonth), '15543942');
+  // Active le hard-block par défaut (le crédit est mort, plus de marge)
+  if (localStorage.getItem('epubson_quota_hardblock') === null) {
+    localStorage.setItem('epubson_quota_hardblock', '1');
+  }
+  // Verrouille les voix premium par défaut (force Standard)
+  if (localStorage.getItem('epubson_premium_unlocked') === null) {
+    localStorage.setItem('epubson_premium_unlocked', '0');
+  }
+  // Bascule sur Standard si on était sur une voix premium
+  const currentVoice = localStorage.getItem('epubson_voice');
+  if (currentVoice && isPremiumVoice(currentVoice) && !isPremiumUnlocked()) {
+    localStorage.setItem('epubson_voice', 'fr-FR-Standard-C');
+    selectedVoice = 'fr-FR-Standard-C';
+  }
+  localStorage.setItem('epubson_quota_seed', SEED_VERSION);
+  console.log('[Quota] Seed v2 appliqué : Chirp3-HD juin = 15 543 942 chars · hard-block ON · premium verrouillé · voix=Standard-C');
+}
+
+// Total caractères + € facturé tous tiers confondus pour le mois courant.
+function getMonthlyTotalSpending() {
+  const month = currentMonthKey();
+  const tiers = ['Chirp3-HD','Studio','Neural2','WaveNet','Polyglot','Standard'];
+  let totalEur = 0, totalChars = 0, lines = [];
+  for (const t of tiers) {
+    const used = parseInt(localStorage.getItem(quotaStoreKey(t, month)) || '0', 10);
+    if (used === 0) continue;
+    const info = { 'Chirp3-HD':{u:30,f:1}, 'Studio':{u:160,f:0.1}, 'Neural2':{u:16,f:1},
+                   'WaveNet':{u:16,f:1}, 'Polyglot':{u:16,f:1}, 'Standard':{u:4,f:4} }[t];
+    const free = info.f * 1_000_000;
+    const billable = Math.max(0, used - free);
+    const eur = (billable / 1_000_000) * info.u * USD_TO_EUR;
+    totalEur += eur;
+    totalChars += used;
+    lines.push({ tier: t, used, billable, eur });
+  }
+  return { totalEur, totalChars, lines };
+}
+// Bandeau persistant en haut de page (visible avant même de charger un ePub)
+function refreshGlobalQuotaBanner() {
+  try {
+  const monthEl  = document.getElementById('gqbMonth');
+  const totalEl  = document.getElementById('gqbTotal');
+  const barEl    = document.getElementById('gqbBar');
+  const detailEl = document.getElementById('gqbDetail');
+  if (!monthEl) return;
+  const month = currentMonthKey();
+  monthEl.textContent = month;
+  const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
+  const used = getMonthlyChars(tier);
+  const free = freeM * 1_000_000;
+  const pct = Math.min(100, (used / free) * 100);
+  let color = '#86efac';
+  if (pct >= 100) color = '#fca5a5';
+  else if (pct >= 80) color = '#fdba74';
+  else if (pct >= 50) color = '#fde047';
+  barEl.style.width = `${pct}%`;
+  barEl.style.background = color;
+  const total = getMonthlyTotalSpending();
+  totalEl.innerHTML = total.totalEur > 0
+    ? `💸 <strong style="color:#fca5a5">${total.totalEur.toFixed(2)} €</strong> dépensés ce mois`
+    : `<strong style="color:#86efac">0 €</strong> dépensé ce mois`;
+  const overChars = Math.max(0, used - free);
+  const tierLine = `Voix active <strong style="color:var(--ink)">${tier}</strong> · <strong>${used.toLocaleString('fr')}</strong>/${free.toLocaleString('fr')} car (<span style="color:${color}">${pct.toFixed(1)}%</span>)${overChars > 0 ? ` · <span style="color:#fca5a5">+${overChars.toLocaleString('fr')} hors quota</span>` : ''}`;
+  const otherTiers = total.lines.filter(l => l.tier !== tier).map(l =>
+    `${l.tier} ${l.used.toLocaleString('fr')}${l.eur > 0 ? ` (+${l.eur.toFixed(2)} €)` : ''}`
+  ).join(' · ');
+  detailEl.innerHTML = tierLine + (otherTiers ? `<br>Autres tiers ce mois : ${otherTiers}` : '');
+  } catch (e) { console.error('[refreshGlobalQuotaBanner]', e); }
+}
+
+function refreshQuotaPanel() {
+  refreshGlobalQuotaBanner();
+  const el = document.getElementById('quotaPanelContent');
+  if (!el) return;
+  const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
+  const used = getMonthlyChars(tier);
+  const free = freeM * 1_000_000;
+  const pct = Math.min(100, (used / free) * 100);
+  const over = Math.max(0, used - free);
+  const overEur = ((over / 1_000_000) * usdPerM * USD_TO_EUR).toFixed(2);
+  const month = currentMonthKey();
+
+  let color = '#86efac'; // vert
+  if (pct >= 100) color = '#fca5a5';        // rouge
+  else if (pct >= 80) color = '#fdba74';    // orange
+  else if (pct >= 50) color = '#fde047';    // jaune
+
+  // Total facturé tous tiers confondus pour le mois
+  const total = getMonthlyTotalSpending();
+  const totalLines = total.lines.map(l =>
+    `<span style="opacity:.85">${l.tier} : ${l.used.toLocaleString('fr')} char${l.billable > 0 ? ` (+${(l.eur).toFixed(2)} €)` : ' (gratuit)'}</span>`
+  ).join(' · ');
+  const totalLine = total.totalEur > 0
+    ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:11px">
+         💸 <strong style="color:var(--ink)">Dépensé ce mois (tous tiers)</strong> : <strong style="color:#fca5a5">${total.totalEur.toFixed(2)} €</strong> · ${total.totalChars.toLocaleString('fr')} caractères<br>
+         <span style="font-size:10px;opacity:.7">${totalLines}</span>
+       </div>`
+    : '';
+
+  el.innerHTML = `
+    <strong style="color:var(--ink)">📊 Quota gratuit Google TTS</strong> · ${month} · voix <strong>${tier}</strong><br>
+    <strong>${used.toLocaleString('fr')}</strong> / ${free.toLocaleString('fr')} caractères facturés (<strong style="color:${color}">${pct.toFixed(1)}%</strong>)
+    ${over > 0 ? `<br><span style="color:#fca5a5">⚠ Dépassement : ${over.toLocaleString('fr')} caractères → ~${overEur} € à payer</span>` : ''}
+    ${totalLine}
+    <br><span style="font-size:10px;opacity:.7">Le compteur est local au navigateur — il s'incrémente uniquement sur les appels Google effectifs (cache miss). Google reset le quota le 1er du mois.</span>
+  `;
+  const bar = document.getElementById('quotaBar');
+  if (bar) { bar.style.width = `${pct}%`; bar.style.background = color; }
+  // Restore checkbox state
+  const cb = document.getElementById('quotaHardBlock');
+  if (cb) cb.checked = isHardBlockEnabled();
+}
+
+function removeBookFromQueue(bi) {
+  booksQueue.splice(bi, 1);
+  renderBooksQueue();
+}
+
+function selectAllInBook(bi, val) {
+  document.querySelectorAll(`#chapterList_${bi} input[type=checkbox]`).forEach(cb => cb.checked = val);
+  updateCostEstimate();
+}
+
+// Rendu des chapitres pour UN livre spécifique (avec flèches ↑↓ et édition titre)
+function renderChapterListForBook(bi) {
+  const list = document.getElementById(`chapterList_${bi}`);
+  if (!list) return;
+  const book = booksQueue[bi];
+  // Capture l'état des cases actuelles (par index)
+  const prevChecked = new Map();
+  list.querySelectorAll('.ch-item').forEach((el, i) => {
+    const cb = el.querySelector('input[type=checkbox]');
+    if (cb) prevChecked.set(i, cb.checked);
+  });
+  list.innerHTML = '';
+  book.chapters.forEach((ch, i) => {
+    const wc = ch.text.split(/\s+/).length;
+    const isChecked = prevChecked.has(i) ? prevChecked.get(i) : true;
+    const el = document.createElement('div');
+    el.className = 'ch-item';
+    el.innerHTML = `
+      <input type="checkbox" id="ch_${bi}_${i}" ${isChecked?'checked':''} onchange="updateCostEstimate()">
+      <span class="ch-item-name" data-bi="${bi}" data-i="${i}" title="Cliquer pour renommer" style="cursor:pointer;flex:1">${ch.title}</span>
+      <span class="ch-item-words" style="margin-right:8px">${wc.toLocaleString('fr')} mots</span>
+      <button class="ch-move" data-bi="${bi}" data-dir="up"   data-i="${i}" ${i===0?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↑</button>
+      <button class="ch-move" data-bi="${bi}" data-dir="down" data-i="${i}" ${i===book.chapters.length-1?'disabled':''} style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;padding:2px 6px;font-size:14px">↓</button>`;
+    list.appendChild(el);
+  });
+  list.querySelectorAll('.ch-move').forEach(btn => {
+    btn.onclick = e => {
+      e.preventDefault();
+      const i = parseInt(btn.dataset.i, 10);
+      const j = btn.dataset.dir === 'up' ? i-1 : i+1;
+      if (j < 0 || j >= book.chapters.length) return;
+      [book.chapters[i], book.chapters[j]] = [book.chapters[j], book.chapters[i]];
+      renderChapterListForBook(bi);
+    };
+  });
+  list.querySelectorAll('.ch-item-name').forEach(span => {
+    span.onclick = () => {
+      const i = parseInt(span.dataset.i, 10);
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = book.chapters[i].title;
+      input.style.cssText = 'flex:1;background:var(--lift);border:1px solid var(--accent);border-radius:4px;color:#fff;padding:2px 6px;font-size:13px;font-family:inherit';
+      span.replaceWith(input);
+      input.focus(); input.select();
+      const commit = () => {
+        book.chapters[i].title = input.value.trim() || book.chapters[i].title;
+        renderChapterListForBook(bi);
+      };
+      input.onblur = commit;
+      input.onkeydown = e => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') renderChapterListForBook(bi);
+      };
+    };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EPUB PARSE
+// ─────────────────────────────────────────────────────────────────────────────
+async function parseEpub(zip) {
+  const cxml = await zip.file('META-INF/container.xml').async('string');
+  const cdoc = new DOMParser().parseFromString(cxml, 'application/xml');
+  const opfPath = cdoc.querySelector('rootfile').getAttribute('full-path');
+  const opfDir  = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
+  const oxml    = await zip.file(opfPath).async('string');
+  const odoc    = new DOMParser().parseFromString(oxml, 'application/xml');
+
+  const title  = odoc.querySelector('metadata > *[*|name="title"],  dc\\:title,  title')?.textContent?.trim()  || 'Sans titre';
+  const author = odoc.querySelector('metadata > *[*|name="creator"], dc\\:creator, creator')?.textContent?.trim() || 'Auteur inconnu';
+
+  // Cover image — détection en cascade selon les conventions ePub variées
+  let coverUrl = null;
+  let coverBytes = null;       // bytes bruts pour embed dans le M4B
+  let coverMimeType = 'image/jpeg';
+  try {
+    let coverItem = null;
+    // Stratégie 1 : EPUB 3 — manifest item avec properties="cover-image"
+    coverItem = odoc.querySelector('manifest item[properties~="cover-image"]');
+    // Stratégie 2 : <meta name="cover" content="ID_DU_MANIFEST"/> (EPUB 2)
+    if (!coverItem) {
+      const metaCover = odoc.querySelector('metadata > meta[name="cover"]');
+      const coverItemId = metaCover?.getAttribute('content');
+      if (coverItemId) {
+        coverItem = odoc.querySelector(`manifest item[id="${coverItemId}"]`);
+      }
+    }
+    // Stratégie 3 : id classiques (cover, cover-image, coverImage)
+    if (!coverItem) {
+      coverItem = odoc.querySelector('manifest item[id="cover-image"], manifest item[id="cover"], manifest item[id="coverImage"], manifest item[id="cover_image"]');
+    }
+    // Stratégie 4 : premier item image dont l'id ou href contient "cover"
+    if (!coverItem) {
+      const items = [...odoc.querySelectorAll('manifest item')];
+      coverItem = items.find(it => {
+        const id = (it.getAttribute('id') || '').toLowerCase();
+        const href = (it.getAttribute('href') || '').toLowerCase();
+        const mt = (it.getAttribute('media-type') || '').toLowerCase();
+        return mt.startsWith('image/') && (id.includes('cover') || href.includes('cover'));
+      });
+    }
+
+    if (coverItem) {
+      const href = coverItem.getAttribute('href');
+      const mediaType = coverItem.getAttribute('media-type') || 'image/jpeg';
+      const imgFile = zip.file(opfDir + href) || zip.file(href);
+      if (imgFile) {
+        const bytes = await imgFile.async('uint8array');
+        coverBytes = bytes;                       // ← conserve les bytes pour le M4B
+        coverMimeType = mediaType;
+        const blob = new Blob([bytes], { type: mediaType });
+        coverUrl = URL.createObjectURL(blob);
+      }
+    }
+  } catch(e) { console.warn('[Cover] extraction ePub failed:', e); }
+
+  const spineIds = [...odoc.querySelectorAll('spine itemref')].map(i => i.getAttribute('idref'));
+  const manifest = {};
+  odoc.querySelectorAll('manifest item').forEach(it => { manifest[it.getAttribute('id')] = it.getAttribute('href'); });
+
+  // ── Parse la TOC EPUB pour récupérer les titres "officiels" du livre ──────
+  // La TOC est la source la plus fiable pour les noms (PREMIÈRE PARTIE, etc.)
+  // car elle n'est pas affectée par le contenu mal structuré des fichiers.
+  const tocByHref = await parseTocMap(zip, odoc, opfDir, manifest);
+  console.log('%c[ePub TOC] Contenu de la TOC :', 'color:#c084fc;font-weight:bold');
+  if (tocByHref.size === 0) {
+    console.warn('⚠ AUCUNE entrée TOC trouvée — vérifie le fichier ePub');
+  } else {
+    tocByHref.forEach((title, href) => console.log(`  ${href} → "${title}"`));
+  }
+
+  const chapters = [];
+  const PART_PATTERN = /\b(première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(partie|tome|livre|book|part)\b|\b(partie|tome|livre|book|part)\s+[IVXLC0-9]+\b/i;
+
+  // Détermine où commence la zone "TOC" dans le spine : tout ce qui précède
+  // est traité comme frontmatter (TOME, copyright), tout ce qui est dans
+  // l'intervalle TOC mais HORS TOC est considéré comme filler parasite.
+  const tocHrefs = new Set();
+  tocByHref.forEach((_, h) => tocHrefs.add(h));
+  let firstTocSpineIdx = -1;
+  for (let i = 0; i < spineIds.length; i++) {
+    const h = manifest[spineIds[i]];
+    if (h && (tocHrefs.has(h) || tocHrefs.has(h.split('#')[0]))) { firstTocSpineIdx = i; break; }
+  }
+
+  for (let i = 0; i < spineIds.length; i++) {
+    const id = spineIds[i];
+    const href = manifest[id]; if (!href) continue;
+    const fobj = zip.file(opfDir + href) || zip.file(href); if (!fobj) continue;
+    const html  = await fobj.async('string');
+    const doc   = new DOMParser().parseFromString(html, 'text/html');
+    let chTitle = extractChapterTitle(doc, chapters.length + 1);
+    const originalTitle = chTitle;
+
+    const tocTitle = tocByHref.get(href) || tocByHref.get(href.split('#')[0]);
+    const inToc = !!tocTitle;
+    const isFrontmatter = firstTocSpineIdx === -1 || i < firstTocSpineIdx;
+
+    // Override du titre via TOC si pertinent
+    let overrideReason = null;
+    if (inToc && PART_PATTERN.test(tocTitle)) {
+      chTitle = tocTitle; overrideReason = 'TOC=PARTIE';
+    } else if (inToc && /^\s*(chapitre|chapter)\s+(\w+|[IVXLC]+|\d+)\s*$/i.test(chTitle.split(' — ')[0])) {
+      if (tocTitle.length > chTitle.length && !/^\s*chapitre\s+\d+\s*$/i.test(tocTitle)) {
+        chTitle = tocTitle; overrideReason = 'TOC plus riche';
+      }
+    }
+
+    const text = extractText(doc.body).trim();
+
+    // Logique de filtrage :
+    //  - Frontmatter (avant la zone TOC) : keep si text > 80 (comportement
+    //    historique pour TOME I etc.)
+    //  - Dans la zone TOC ET référencé par la TOC : keep TOUJOURS (la TOC est
+    //    l'autorité, on accepte les pages PARTIE même très courtes)
+    //  - Dans la zone TOC mais HORS TOC : DROP (fichiers fillers parasites)
+    let kept = false, dropReason = null;
+    if (isFrontmatter) {
+      if (text.length > 80) { chapters.push({ title: chTitle, text }); kept = true; }
+      else dropReason = 'frontmatter trop court';
+    } else if (inToc) {
+      chapters.push({ title: chTitle, text }); kept = true;
+    } else {
+      dropReason = 'hors TOC (filler parasite)';
+    }
+    console.log(`[Chapitre] href="${href}" | extr="${originalTitle}" | TOC="${tocTitle||'∅'}" | final="${chTitle}" | ${kept?'KEEP':'DROP ('+dropReason+')'}${overrideReason?' ['+overrideReason+']':''}`);
+  }
+
+  return { title, author, coverUrl, coverBytes, coverMimeType, chapters };
+}
+
+// Parse la TOC EPUB (nav.xhtml v3 ou toc.ncx v2) → Map(href → title).
+// Retourne une Map vide si pas de TOC trouvée.
+async function parseTocMap(zip, odoc, opfDir, manifest) {
+  const result = new Map();
+  try {
+    // EPUB 3 : item avec properties="nav" dans le manifest
+    const navItem = [...odoc.querySelectorAll('manifest item')].find(it =>
+      (it.getAttribute('properties') || '').split(/\s+/).includes('nav'));
+    if (navItem) {
+      const navHref = navItem.getAttribute('href');
+      const navFile = zip.file(opfDir + navHref) || zip.file(navHref);
+      if (navFile) {
+        const navHtml = await navFile.async('string');
+        const navDoc = new DOMParser().parseFromString(navHtml, 'text/html');
+        const navEl = navDoc.querySelector('nav[*|type="toc"], nav') || navDoc.body;
+        // Parcourt récursivement tous les <a href> pour récupérer (href, label).
+        // Aussi : items SANS href mais avec texte (genre <span>) si parent
+        // a des enfants → ce sont des entrées structurelles type PARTIE.
+        const navDir = navHref.includes('/') ? navHref.substring(0, navHref.lastIndexOf('/') + 1) : '';
+        navEl.querySelectorAll('a[href], span').forEach(el => {
+          const text = el.textContent.replace(/\s+/g, ' ').trim();
+          if (!text) return;
+          const href = el.getAttribute('href');
+          if (href) {
+            const resolved = (navDir + href.split('#')[0]).replace(/^\.\//, '');
+            if (!result.has(resolved)) result.set(resolved, text);
+          }
+        });
+      }
+    }
+    // EPUB 2 : toc.ncx (fallback)
+    if (result.size === 0) {
+      const spineEl = odoc.querySelector('spine');
+      const ncxId = spineEl?.getAttribute('toc');
+      if (ncxId && manifest[ncxId]) {
+        const ncxFile = zip.file(opfDir + manifest[ncxId]) || zip.file(manifest[ncxId]);
+        if (ncxFile) {
+          const ncxXml = await ncxFile.async('string');
+          const ncxDoc = new DOMParser().parseFromString(ncxXml, 'application/xml');
+          const ncxDir = manifest[ncxId].includes('/') ? manifest[ncxId].substring(0, manifest[ncxId].lastIndexOf('/') + 1) : '';
+          ncxDoc.querySelectorAll('navPoint').forEach(np => {
+            const text = np.querySelector('navLabel text')?.textContent?.replace(/\s+/g, ' ').trim();
+            const src = np.querySelector('content')?.getAttribute('src');
+            if (text && src) {
+              const resolved = (ncxDir + src.split('#')[0]).replace(/^\.\//, '');
+              if (!result.has(resolved)) result.set(resolved, text);
+            }
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('TOC parsing failed:', e);
+  }
+  return result;
+}
+
+// Extrait un titre de chapitre lisible. Combine headings + scan body, avec
+// PRIORITÉ aux pages de partie ("PREMIÈRE PARTIE", etc.) qui sont des
+// séparateurs structurels du livre.
+function extractChapterTitle(doc, fallbackNum) {
+  // Source 1 : headings standards (jusqu'à 4)
+  const fromHeadings = [...doc.querySelectorAll('h1, h2, h3, h4, h5, h6')]
+    .slice(0, 4)
+    .map(h => h.textContent.replace(/\s+/g, ' ').trim());
+
+  // Source 2 : premiers éléments body qui ressemblent à un titre
+  const fromBody = [];
+  const blocks = [...(doc.body || doc).querySelectorAll('p, div, span, header')].slice(0, 30);
+  for (const el of blocks) {
+    if (el.querySelector('p, div')) continue;
+    const t = el.textContent.replace(/\s+/g, ' ').trim();
+    if (t.length === 0) continue;
+    if (t.length > 120) break;
+    const looksLikeTitle =
+      /^[A-ZÉÈÊÀÂÔÛÎÇŸÆŒ0-9\s'’.\-:!?—,]+$/.test(t) ||
+      /^\s*(chapitre|chapter|prologue|épilogue|epilogue|avant[- ]propos|préface|preface|partie|livre|book|part)/i.test(t) ||
+      /^\s*[IVXLCDM]+\s*$/i.test(t) ||
+      /^\s*\d+\s*$/.test(t);
+    if (looksLikeTitle) fromBody.push(t);
+    if (fromBody.length >= 4) break;
+  }
+
+  const all = [...fromHeadings, ...fromBody]
+    .map(t => t.replace(/\s+/g, ' ').trim())
+    .filter(t => t.length > 0 && t.length < 200);
+
+  // PRIORITÉ : si on détecte une page de PARTIE (PREMIÈRE/DEUXIÈME/...), on
+  // ignore les autres candidats type "Chapitre N" (qui sont des fragments
+  // parasites venant du bas du fichier) et on ne garde que la partie + son
+  // éventuel sous-titre. Regex SANS ancrage de fin pour matcher "PREMIÈRE
+  // PARTIE quelque chose" ou "première partie : intro" etc.
+  const partRe = /\b(première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|onzième|douzième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(partie|tome|livre|book|part)\b/i;
+  const partOrdRe = /\b(partie|tome|livre|book|part)\s+[IVXLC0-9]+\b/i;
+
+  // Recherche aussi dans le TEXTE complet du début du fichier (au cas où la
+  // mention "PARTIE" serait dans un paragraphe long ignoré par les candidats)
+  const headText = (doc.body || doc).textContent.replace(/\s+/g, ' ').trim().slice(0, 500);
+  const partInHead = headText.match(partRe) || headText.match(partOrdRe);
+
+  const partTitleIdx = all.findIndex(t => partRe.test(t) || partOrdRe.test(t));
+  if (partTitleIdx !== -1 || partInHead) {
+    let partTitle;
+    if (partTitleIdx !== -1) {
+      partTitle = all[partTitleIdx];
+    } else {
+      const m = headText.match(/((?:première|deuxième|troisième|quatrième|cinquième|sixième|septième|huitième|neuvième|dixième|onzième|douzième|premiere|seconde|premier|second|deuxieme|troisieme|quatrieme|cinquieme)\s+(?:partie|tome|livre|book|part)|(?:partie|tome|livre|book|part)\s+[IVXLC0-9]+)/i);
+      partTitle = m ? m[1].toUpperCase().replace(/\s+/g, ' ').trim() : 'PARTIE';
+    }
+
+    // SOUS-TITRE de PARTIE : scan plus permissif que fromBody car les
+    // sous-titres de partie sont souvent en CASSE NORMALE (ex: "Cramponnés
+    // à la toile"). On parcourt les premiers éléments, on attend d'avoir
+    // vu le marqueur PARTIE, puis on prend le prochain élément court qui
+    // n'est ni un autre PARTIE ni un "Chapitre N".
+    const topEls = [...(doc.body || doc).querySelectorAll('p, div, span, header, h1, h2, h3, h4, h5, h6')].slice(0, 50);
+    let sawPart = false;
+    let subtitle = null;
+    for (const el of topEls) {
+      if (el.querySelector('p, div')) continue;
+      const t = el.textContent.replace(/\s+/g, ' ').trim();
+      if (t.length === 0) continue;
+      if (t.length > 200) break; // début du corps du chapitre
+      if (partRe.test(t) || partOrdRe.test(t)) { sawPart = true; continue; }
+      if (!sawPart) continue;
+      if (/^\s*(chapitre|chapter)\s/i.test(t)) continue;
+      if (t === partTitle) continue;
+      subtitle = t;
+      break;
+    }
+    // Fallback : essayer aussi parmi les candidats restants (heading dédié)
+    if (!subtitle) {
+      const startFrom = partTitleIdx !== -1 ? partTitleIdx + 1 : 0;
+      subtitle = all
+        .slice(startFrom)
+        .find(t => !/^\s*(chapitre|chapter)\s/i.test(t) && !partRe.test(t) && !partOrdRe.test(t) && t !== partTitle);
+    }
+    return subtitle ? `${partTitle} — ${subtitle}` : partTitle;
+  }
+
+  // Sinon : dédup classique en gardant le plus long
+  const unique = [];
+  for (const t of all) {
+    const dupIdx = unique.findIndex(u => u === t || u.includes(t) || t.includes(u));
+    if (dupIdx === -1) {
+      unique.push(t);
+    } else if (t.length > unique[dupIdx].length) {
+      unique[dupIdx] = t;
+    }
+  }
+
+  if (unique.length === 0) return `Chapitre ${fallbackNum}`;
+  return unique.slice(0, 3).join(' — ');
+}
+
+function extractText(node) {
+  if (!node) return '';
+  let t = '';
+  for (const c of node.childNodes) {
+    if (c.nodeType === Node.TEXT_NODE) { t += c.textContent; }
+    else if (c.nodeType === Node.ELEMENT_NODE) {
+      const tag = c.tagName.toLowerCase();
+      if (['script','style','nav','aside','figure'].includes(tag)) continue;
+      const inner = extractText(c);
+      if (['p','h1','h2','h3','h4','li','div','br','tr'].includes(tag)) t += inner.trim() + '\n\n';
+      else t += inner;
+    }
+  }
+  return t;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOOK PREVIEW
+// ─────────────────────────────────────────────────────────────────────────────
+// showBookPreview / renderChapterList obsolètes : remplacés par renderBooksQueue
+// et renderChapterListForBook (multi-livre).
+
+// renderChapterList et selectAll (single-book) → remplacés par
+// renderChapterListForBook et selectAllInBook ci-dessus (multi-livre).
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONVERSION
+// ─────────────────────────────────────────────────────────────────────────────
+async function startConversion() {
+  if (booksQueue.length === 0) { alert('Aucun ePub dans la queue.'); return; }
+
+  // Collecte les chapitres sélectionnés par livre AVANT toute mise à jour DOM
+  const booksToProcess = booksQueue.map((book, bi) => ({
+    book,
+    bi,
+    selectedChapters: book.chapters.filter((_, i) => {
+      const cb = document.getElementById(`ch_${bi}_${i}`);
+      return cb && cb.checked;
+    }),
+  })).filter(b => b.selectedChapters.length > 0);
+
+  if (booksToProcess.length === 0) {
+    alert('Sélectionnez au moins un chapitre dans au moins un livre.');
+    return;
+  }
+
+  // ─── Vérif quota gratuit Google avant de lancer ───
+  {
+    const totalChars = booksToProcess.reduce((a, b) =>
+      a + b.selectedChapters.reduce((s, ch) => s + ch.text.length, 0), 0);
+    const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
+    const already = getMonthlyChars(tier);
+    const free    = freeM * 1_000_000;
+    const projected = already + totalChars;
+    if (projected > free) {
+      const over = projected - free;
+      const overEur = ((over / 1_000_000) * usdPerM * USD_TO_EUR).toFixed(2);
+      if (isHardBlockEnabled()) {
+        alert(
+          `🚫 BLOQUÉ — Dépassement du quota gratuit\n\n` +
+          `Voix ${tier} : quota ${free.toLocaleString('fr')} car/mois\n` +
+          `Déjà utilisé ce mois : ${already.toLocaleString('fr')}\n` +
+          `Cette conversion : ${totalChars.toLocaleString('fr')}\n` +
+          `→ Dépassement : ${over.toLocaleString('fr')} car ≈ ${overEur} €\n\n` +
+          `Désactive le blocage dans le panneau quota si tu acceptes la facturation.`
+        );
+        return;
+      }
+      const ok = confirm(
+        `⚠ ATTENTION — Tu vas dépasser le quota gratuit Google\n\n` +
+        `Voix ${tier} : quota ${free.toLocaleString('fr')} car/mois\n` +
+        `Déjà utilisé : ${already.toLocaleString('fr')}\n` +
+        `Cette conversion : ${totalChars.toLocaleString('fr')}\n` +
+        `→ Dépassement facturé : ${over.toLocaleString('fr')} car ≈ ${overEur} €\n\n` +
+        `Lancer quand même ?`
+      );
+      if (!ok) return;
+    }
+  }
+
+  aborted = false;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById('actionRow').style.display = 'none';
+  document.getElementById('abortBtn').style.display = 'block';
+  document.getElementById('progressPanel').style.display = 'block';
+  document.getElementById('progressPanel').classList.add('fade-in');
+
+  // Empêche la mise en veille pendant la conversion (Chrome/Edge)
+  const wakeLockOk = await acquireWakeLock();
+  if (wakeLockOk) {
+    log('🔒 Mise en veille empêchée pendant la conversion','ok');
+  } else {
+    log('⚠ Wake Lock indisponible — laisse l\'onglet visible pour éviter la veille','err');
+  }
+
+  if (!('AudioEncoder' in window)) {
+    alert('Ton navigateur ne supporte pas WebCodecs. Utilise Chrome/Edge récent ou Safari 17+.');
+    return;
+  }
+
+  const BATCH = 8, CONCURRENCY = 4, SILENCE = 0.003, SR = 44100;
+  const allResults = []; // un { url, title, sizeMB, durMin, ext } par livre
+  let grandTotalSentences = 0;
+
+  // ──────── BOUCLE EXTERNE : un livre par itération ──────────────────
+  for (let bookIdx = 0; bookIdx < booksToProcess.length; bookIdx++) {
+    if (aborted) { onAbort(); return; }
+    const { book, selectedChapters } = booksToProcess[bookIdx];
+
+    log(`📚 Livre ${bookIdx+1}/${booksToProcess.length} : ${book.title}`,'hi');
+
+    // Pour compatibilité avec les fonctions qui lisent bookMeta global
+    bookMeta = book;
+    chapters = book.chapters;
+
+  const totalChapters = selectedChapters.length;
+  let totalSentences = 0, totalSamples = 0;
+  // Tracking des chapitres pour la piste de chapitres M4B
+  const chapterMarks = [];
+  let elapsedMs = 0;
+
+  // ── Encodeur AAC UNIQUE par livre (réinitialisé à chaque itération) ──────
+  const aacFrames = []; // chaque entrée = Uint8Array d'une trame AAC complète
+  const aacEncoder = new AudioEncoder({
+    output: (chunk) => {
+      const buf = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(buf);
+      aacFrames.push(buf);
+    },
+    error: (e) => { console.error('AudioEncoder error:', e); log(`⚠ Erreur AAC : ${e.message}`,'err'); }
+  });
+  aacEncoder.configure({
+    codec: 'mp4a.40.2',     // AAC-LC
+    sampleRate: SR,
+    numberOfChannels: 1,
+    // WebCodecs n'accepte que 96000/128000/160000/192000 pour AAC-LC mono.
+    // 96000 est largement suffisant pour de la narration mono.
+    bitrate: 96000,
+    bitrateMode: 'constant'
+  });
+  let audioTimestampUs = 0; // timestamp en µs pour AudioData
+  function encodePCMtoAAC(pcmF32) {
+    if (pcmF32.length === 0) return;
+    const data = new AudioData({
+      format: 'f32',
+      sampleRate: SR,
+      numberOfFrames: pcmF32.length,
+      numberOfChannels: 1,
+      timestamp: audioTimestampUs,
+      data: pcmF32
+    });
+    aacEncoder.encode(data);
+    data.close();
+    audioTimestampUs += (pcmF32.length * 1_000_000) / SR;
+  }
+
+  // Traduction EN → FR activée ?
+  const useTranslation = document.getElementById('translateToggle')?.checked === true;
+
+  // ── Boucle principale : chapitre par chapitre ─────────────────────────────
+  for (let ci = 0; ci < totalChapters; ci++) {
+    if (aborted) { onAbort(); return; }
+    const ch = selectedChapters[ci];
+    const gBase = ci / totalChapters;
+    const gSlice = 1 / totalChapters;
+
+    // Phase optionnelle : traduction anglais → français du contenu
+    if (useTranslation) {
+      log(`🌍 Traduction EN→FR : ${ch.title}…`,'hi');
+      setPhaseDetail(0, `Traduction Ch.${ci+1}/${totalChapters}`);
+      try {
+        const translatedTitle = await translateText(ch.title);
+        const translatedText  = await translateText(ch.text);
+        ch.title = translatedTitle || ch.title;
+        ch.text  = translatedText  || ch.text;
+        log(`✓ Ch.${ci+1} traduit`,'ok');
+      } catch (e) {
+        log(`⚠ Traduction Ch.${ci+1} échouée : ${e.message} — on garde l'anglais`,'err');
+      }
+    }
+
+    const sentences = segmentChapter(ch);
+    const total = sentences.length;
+    totalSentences += total;
+    const ssmlMap = {}, mp3Map = {};
+
+    log(`📖 Ch.${ci+1}/${totalChapters} : ${ch.title} (${total} phrases)`,'hi');
+
+    // Phase 0 : SSML
+    setPhase(0,'active');
+    let ssmlDone = 0;
+    for (let i = 0; i < total; i += BATCH) {
+      if (aborted) { onAbort(); return; }
+      const batch = sentences.slice(i, i + BATCH).map(s => s.text);
+      setPhaseDetail(0, `Ch.${ci+1}/${totalChapters} — lot ${Math.floor(i/BATCH)+1}/${Math.ceil(total/BATCH)}`);
+      const results = await generateSSMLBatch(batch);
+      results.forEach((ssml, j) => { ssmlMap[i+j] = ssml; });
+      ssmlDone += batch.length;
+      setPhaseBar(0, ssmlDone/total*100);
+      updateGlobal(gBase + gSlice*(ssmlDone/total*0.30), `Ch.${ci+1} — SSML ${ssmlDone}/${total}`);
+    }
+    setPhase(0,'done');
+
+    // Phase 1 : TTS
+    setPhase(1,'active');
+    let ttsDone = 0;
+    for (let i = 0; i < total; i += CONCURRENCY) {
+      if (aborted) { onAbort(); return; }
+      const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
+      await Promise.all(slice.map(async idx => {
+        const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
+        mp3Map[idx] = await googleTTS(ssml);
+        ttsDone++;
+        setPhaseBar(1, ttsDone/total*100);
+        setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
+        updateGlobal(gBase + gSlice*(0.30 + ttsDone/total*0.40), `Ch.${ci+1} TTS`);
+      }));
+    }
+    setPhase(1,'done');
+
+    // Phase 2 : Décodage + trim — libère mp3Map immédiatement
+    setPhase(2,'active');
+    const chPcmSegs = [];
+    for (let i = 0; i < total; i++) {
+      if (aborted) { onAbort(); return; }
+      if (!mp3Map[i]) continue;
+      try {
+        const decoded = await audioCtx.decodeAudioData(mp3Map[i]);
+        mp3Map[i] = null;
+        const raw = decoded.getChannelData(0), sr = decoded.sampleRate;
+        let s = 0; while (s < raw.length && Math.abs(raw[s]) < SILENCE) s++;
+        let e = raw.length-1; while (e > s && Math.abs(raw[e]) < SILENCE) e--;
+        e = Math.min(e + Math.floor(sr*0.025), raw.length-1);
+        if (e-s < sr*0.02) continue;
+        const t = raw.slice(s, e+1);
+        const fade = Math.min(Math.floor(sr*0.005), Math.floor(t.length/2));
+        for (let f = 0; f < fade; f++) { const g=f/fade; t[f]*=g; t[t.length-1-f]*=g; }
+        chPcmSegs.push({ pcm: t, gapMs: sentences[i]?.gapMs ?? 450 });
+      } catch(err) { log(`⚠ Segment ${i} ignoré`,'err'); }
+      if (i%20===0) { setPhaseBar(2, i/total*100); updateGlobal(gBase+gSlice*(0.70+i/total*0.20), `Ch.${ci+1} décodage`); await sleep(0); }
+    }
+    setPhaseBar(2,100); setPhase(2,'done');
+
+    // Phase 3 : Encodage AAC du chapitre — libère PCM immédiatement
+    setPhase(3,'active');
+    setPhaseDetail(3, `AAC Ch.${ci+1}/${totalChapters} — ${ch.title}`);
+    log(`🎵 Encodage AAC : ${ch.title}…`,'hi');
+
+    const chapterStartMs = Math.round(elapsedMs);
+
+    for (const seg of chPcmSegs) {
+      totalSamples += seg.pcm.length;
+      elapsedMs += (seg.pcm.length / SR) * 1000;
+      encodePCMtoAAC(seg.pcm);
+      // Pause adaptée à la ponctuation
+      const silLen = Math.floor(SR * seg.gapMs / 1000);
+      if (silLen > 0) encodePCMtoAAC(new Float32Array(silLen));
+      elapsedMs += seg.gapMs;
+    }
+
+    // Pause de fin de chapitre (1 seconde)
+    const endSilenceLen = SR;
+    encodePCMtoAAC(new Float32Array(endSilenceLen));
+    elapsedMs += 1000;
+
+    chPcmSegs.length = 0; // libère PCM
+
+    chapterMarks.push({
+      title: ch.title || `Chapitre ${ci+1}`,
+      startMs: chapterStartMs,
+      endMs: Math.round(elapsedMs),
+    });
+
+    setPhaseBar(3,100); setPhase(3,'done');
+    updateGlobal((ci+1)/totalChapters * 0.97, `Ch.${ci+1}/${totalChapters} encodé`);
+    log(`✓ Ch.${ci+1} AAC encodé`,'ok');
+    await sleep(0);
+  }
+
+  // Flush final : assure que toutes les trames AAC sont émises
+  await aacEncoder.flush();
+  aacEncoder.close();
+
+  // ── Finalisation M4B pour CE livre (un par itération externe) ────────────
+  updateGlobal(0.99 * ((bookIdx+1)/booksToProcess.length), `Finalisation M4B livre ${bookIdx+1}…`);
+
+  log(`📦 Construction M4B AAC (${chapterMarks.length} chapitres, ${aacFrames.length} trames)…`,'hi');
+  await sleep(0);
+  const m4bParts = buildM4B(aacFrames, chapterMarks, book.title, book.author, SR, book.coverBytes, book.coverMimeType);
+  const m4bBlob  = new Blob(m4bParts, { type:'audio/mp4' });
+  const url      = URL.createObjectURL(m4bBlob);
+  const sizeMB   = (m4bBlob.size/1024/1024).toFixed(1);
+  const durMin   = Math.round(elapsedMs/60000);
+
+  log(`✓ Livre ${bookIdx+1}/${booksToProcess.length} prêt — ${sizeMB} Mo (~${durMin} min)`,'ok');
+  allResults.push({ url, title: book.title, sizeMB, durMin, ext:'m4b' });
+  grandTotalSentences += totalSentences;
+  } // fin de la boucle externe sur les livres
+
+  updateGlobal(1, `Terminé ! ${allResults.length} livre${allResults.length>1?'s':''}`);
+  document.getElementById('abortBtn').style.display = 'none';
+  await releaseWakeLock();
+  const overallTitle = allResults.length === 1
+    ? allResults[0].title
+    : `${allResults.length} livres audio`;
+  showResult(allResults, overallTitle, grandTotalSentences);
+}
+
+function sentenceGapMs(text) {
+  const t = text.trimEnd();
+  if (/[!?]$/.test(t))   return 550;  // exclamation / question
+  if (/[.»…]$/.test(t))  return 450;  // fin de phrase normale
+  if (/[;]$/.test(t))    return 300;  // point-virgule
+  if (/[:]$/.test(t))    return 250;  // deux-points
+  if (/[,]$/.test(t))    return 150;  // virgule (rare ici)
+  return 400;                          // défaut
+}
+
+// Normalise le texte français pour préserver les élisions/liaisons d'apostrophe.
+// Les ePub utilisent souvent ' (U+2019), parfois avec des NBSP autour, ce qui
+// fait que Google TTS lit "l ' homme" au lieu de "l'homme" (élision cassée).
+// Post-traitement du SSML : aucun élément (balise, espace) ne doit s'intercaler
+// entre une élision (l', d', n', qu', etc.) et le mot suivant.
+// Classe de TOUTES les variantes d'apostrophe en escapes Unicode EXPLICITES
+// (zéro ambiguïté d'encodage du fichier source) :
+//   U+0027 '   ASCII apostrophe
+//   U+2018 '   left single quotation mark
+//   U+2019 '   right single quotation mark (typographique français)
+//   U+201A ‚   single low-9 quote
+//   U+201B ‛   single high-reversed-9 quote
+//   U+02B9 ʹ   modifier letter prime
+//   U+02BB ʻ   modifier letter turned comma
+//   U+02BC ʼ   modifier letter apostrophe
+//   U+02BD ʽ   modifier letter reversed comma
+//   U+02C8 ˈ   modifier letter vertical line (stress mark)
+//   U+0060 `   grave accent (parfois utilisé à tort)
+//   U+00B4 ´   acute accent
+//   U+0301  ́   combining acute accent
+const APOS_ALL = /['‘’‚‛ʹʻʼʽˈ`´́]/g;
+// Conservé pour rétro-compatibilité du code existant
+const APOS_VARIANTS = APOS_ALL;
+const APOS = '’';  // ' typographique
+
+// Table de prononciations personnalisées : { motOriginal: écriturePhonétique }
+// Le mot original est matché en \b...\b case-insensitive, donc toutes les casses
+// sont couvertes. Ajouter ici tout nom propre dont la prononciation TTS naturelle
+// n'est pas satisfaisante.
+// Table des prononciations forcées. TROIS formats d'entrée acceptés :
+//   1. STRING        : substitution textuelle simple
+//                      ex: 'Stormbringer' : 'stormbringueur'
+//   2. { ipa, alt }  : wrap dans <phoneme alphabet="ipa" ph="ipa">alt</phoneme>
+//                      Neural2/WaveNet utilisent IPA via ph. Chirp3 strippe et
+//                      lit l'alt.
+//   3. { lang, alt } : wrap dans <lang xml:lang="…">alt</lang> pour basculer
+//                      Google sur une autre langue (typiquement en-GB pour les
+//                      mots à prononcer à l'anglaise).
+//                      Chirp3 strippe le lang et lit l'alt (texte FR).
+//   Si alt est omis, on utilise la chaîne matchée d'origine.
+const PRONUNCIATIONS = {
+  // ── Substitutions textuelles ─────────────────────────────────────────────
+  'Menzoberanzann': 'Menzoberannezanne',
+  'Menzoberranzan': 'Menzoberannezanne',  // graphie canonique D&D (2 r, 1 z)
+  'Jarlaxle':       'jarlax',
+  'Crenshinibon':   'Crenshinibonne',
+  // Apostrophe typographique ' (U+2019) car les substitutions s'appliquent
+  // APRÈS la normalisation d'apostrophe (étape 2 de fixSSMLElisions).
+  'D’aerthe':       'Dersse',
+  // "d'œil" → "doeil" : Google TTS coupe sinon. Couvre œ/oe et casse.
+  'd’œil':          'doeil',
+  'D’œil':          'Doeil',
+  'd’oeil':         'doeil',
+  'D’oeil':         'Doeil',
+
+  // "l'œil" seul (sans "coup d'") était lu "l'île œil" — mot inventé !
+  // Bug observé dans la transcription Whisper : "à l'œil" → "à l'île œil".
+  // Format IPA + alt textuel pour Chirp3 (qui ne supporte pas <phoneme>).
+  'l’œil':          { ipa: 'lœj',         alt: 'l’œil'   },
+  'L’œil':          { ipa: 'lœj',         alt: 'L’œil'   },
+  'l’oeil':         { ipa: 'lœj',         alt: 'l’œil'   },
+  'L’oeil':         { ipa: 'lœj',         alt: 'L’œil'   },
+  'l’œil nu':       { ipa: 'lœj ny',      alt: 'l’œil nu'},  // expression "à l'œil nu"
+
+  // ── Entrées IPA + ALT pour Chirp3 ────────────────────────────────────────
+  // Le pluriel '-ées' fait buguer Chirp3 (lecture lettre par lettre).
+  // Solution : alt='forme singulière sans s' → Chirp3 lit la forme propre.
+  // Pour Neural2/WaveNet, ph='IPA' reste prioritaire.
+  // Note : étape 4 fusionne "l'épée" → "lépée" et "d'épée" → "dépée" avant
+  // step 6, donc on cible les formes post-fusion.
+  'épée':           { ipa: 'epe',  alt: 'épée'  },
+  'épées':          { ipa: 'epe',  alt: 'épée'  },
+  'lépée':          { ipa: 'lepe', alt: 'lépée' },
+  'lépées':         { ipa: 'lepe', alt: 'lépée' },
+  'dépée':          { ipa: 'depe', alt: 'dépée' },
+  'dépées':         { ipa: 'depe', alt: 'dépée' },
+  // été : neutralise la règle globale "é final → er" pour ce mot spécifique
+  //   Sans ça : été → êter → Google lit /etɛʁ/ ("é-tère")
+  //   Avec phoneme : Google lit l'IPA "ete" → /ete/ (correct)
+  //   Variantes post-fusion d'élision ajoutées car step 4 transforme
+  //   "l'été" → "lété" et "d'été" → "dété" AVANT step 6.
+  'été':            { ipa: 'ete',  alt: 'été'  },
+  'Été':            { ipa: 'ete',  alt: 'Été'  },
+  'étés':           { ipa: 'ete',  alt: 'été'  },  // pluriel → singulier pour Chirp3
+  'détée':          { ipa: 'dete', alt: 'dété' },  // forme rare/typo, mappée sur dété
+  'Détée':          { ipa: 'dete', alt: 'Dété' },
+  'lété':           { ipa: 'lete', alt: 'lété' },  // post-fusion de l'été
+  'Lété':           { ipa: 'lete', alt: 'Lété' },
+  'dété':           { ipa: 'dete', alt: 'dété' },  // post-fusion de d'été
+  'Dété':           { ipa: 'dete', alt: 'Dété' },
+
+  // ── Personnages "Terre natale" (Tome 1 Légende de Drizzt) ──────────────
+  // Analyse Whisper Chapitre 1 (37 min audio, 5219 mots transcrits)
+  'Briza':          { ipa: 'bʁiza',        alt: 'Briza'        },  // z lu /s/ → "Brisa" 21x
+  'Rizzen':         { ipa: 'ʁizɛn',        alt: 'Rizzen'       },  // z lu /s/ → "Risen" 4x
+  'Lolth':          { ipa: 'lɔlt',         alt: 'Lolt'         },  // th + s parasite → "lols" 7x
+  'Do’Urden':       { ipa: 'douʁdɛn',      alt: 'Do Urden'     },  // apostrophe → "d'ourden" 13x, "d'eau-hourden" 8x
+  'do’Urden':       { ipa: 'douʁdɛn',      alt: 'do Urden'     },
+  'Devir':          { ipa: 'dəviʁ',        alt: 'Devir'        },  // splittée "de vire" 10x
+  'Baenre':         { ipa: 'bɛnʁə',        alt: 'Baenre'       },  // splittée "ben re"
+  'Zaknafein':      { ipa: 'zaknafɛn',     alt: 'Zaknafein'    },  // splittée + k lu /ʃ/
+  'Zak':            { ipa: 'zak',          alt: 'Zak'          },  // k lu /ʃ/ → "zach" 4x (standalone)
+  'piwafwi':        { ipa: 'piwafwi',      alt: 'piwafwi'      },  // mot drow rare → "piwafoui"
+  'piwafwis':       { ipa: 'piwafwi',      alt: 'piwafwi'      },
+  'Tier Breche':    { ipa: 'tjɛʁ bʁɛʃ',    alt: 'Tier Breche'  },  // mergé → "tirebrèche"
+  'melee-magthere': { ipa: 'mɛle magtɛʁ',  alt: 'melee magthere' },
+  'dweomers':       { ipa: 'dweomeʁ',      alt: 'dweomers'     },
+  'dweomer':        { ipa: 'dweomeʁ',      alt: 'dweomer'      },
+  'thallophytes':   { ipa: 'talɔfit',      alt: 'thallophyte'  },
+  'thallophyte':    { ipa: 'talɔfit',      alt: 'thallophyte'  },
+
+  // ── Personnages "Serviteur du Cristal" (Salvatore) ──────────────────────
+  // Analyse Whisper du Tome 1 (41 min audio transcrits)
+  'Ellifain':       { ipa: 'elifɛn',       alt: 'Ellifaïne'    },  // -ain non nasalisé
+  'Entreri':        { ipa: 'ɛntʁeʁi',      alt: 'Entreri'      },  // alt explicite pour Chirp3 (78% correct, 22% ajoutait "e" final)
+  'Dwahvel':        { ipa: 'dwavɛl',       alt: 'Doivelle'     },  // /dwavɛl/ = "doi-velle" en phonétique FR
+
+  // Personnages Mercenaires (Bregan D'aerthe)
+  'Sharlotta':      { ipa: 'ʃaʁlɔta',      alt: 'Charlotta'    },  // 30+ variantes Whisper, vrai bug
+  'Sha’lazzi':      { ipa: 'ʃalazi',       alt: 'Chalazi'      },  // apostrophe + zz problématique
+  'Berg’inyon':     { ipa: 'bɛʁɡinjɔn',    alt: 'Berguignon'   },  // apostrophe → "guignon" français
+  'Rai-guy':        { ipa: 'ʁɛɡi',         alt: 'Rai-gui'      },  // hyphen, lectures incohérentes
+  'Kimmuriel':      { ipa: 'kimyʁjɛl',     alt: 'Kimmuriel'    },  // double m forcé via ph
+  'Oblodra':        { ipa: 'ɔblɔdʁa',      alt: 'Oblodra'      },
+  'Basadoni':       { ipa: 'bazadɔni',     alt: 'Basadoni'     },  // un seul s
+  'Portcalim':      { ipa: 'pɔʁkalim',     alt: 'Portcalim'    },  // t silencieux OK
+  'Vespers':        { ipa: 'vɛspɛʁ',       alt: 'Vespères'     },  // s final muet
+  'Ozoule':         { ipa: 'ɔzul',         alt: 'Ozoule'       },  // e final muet
+
+  // ── Vocabulaire D&D / fantasy (au-delà des noms propres) ─────────────────
+  // Analyse Whisper : ces mots récurrents du genre étaient mal lus.
+  'drow':           { ipa: 'dʁɔw',         alt: 'drow'         },  // était "drô" (w muet) ou "drôle"
+  'drows':          { ipa: 'dʁɔw',         alt: 'drow'         },  // pluriel s muet, même prononciation que singulier
+  'halfeline':      { ipa: 'alf.lin',      alt: 'halfeline'    },  // pas "half-line"
+  'halfelines':     { ipa: 'alf.lin',      alt: 'halfeline'    },  // s pluriel muet
+  'face-de-lune':   { ipa: 'fasdəlyn',     alt: 'face-de-lune' },  // composé Salvatore, lu d'un trait
+
+  // ── Mots rares qui font buguer le TTS ────────────────────────────────────
+  'impavide':       { ipa: 'ɛ̃pavid',      alt: 'impavide'     },  // était lu "un pas vide" !
+  'd’indices':      { ipa: 'dɛ̃dis',       alt: 'd’indices'    },  // était lu "d'un dix" (1+10) !!!
+  'indices':        { ipa: 'ɛ̃dis',        alt: 'indices'      },  // sécurise les autres formes
+  'sine qua non':   { ipa: 'sinekwanɔn',   alt: 'sine qua non' },  // latin, pas "sinkanon"
+
+  // ── Liaisons critiques qui fusionnent mal ────────────────────────────────
+  // "à ciel ouvert" était lu "à sel ouvert" — perte de sens totale
+  'à ciel':         { ipa: 'a sjɛl',       alt: 'à ciel'       },
+
+  // ── Nom de taverne dans le livre ─────────────────────────────────────────
+  'Cuivre Ante':    { ipa: 'kɥivʁ ɑ̃t',    alt: 'Cuivre Ante'  },  // était fusionné "Cuivrante"
+
+  // ── Inversions Q (verbe-pronom) qui perdent leur liaison ────────────────
+  // Analyse Whisper : sont-ils 2x ePub, 0 Whisper → la liaison /t/ est perdue
+  // ou l'hyphen produit une coupure. On force la liaison via IPA.
+  'sont-ils':       { ipa: 'sɔ̃til',       alt: 'sontils'      },  // était lu "sont ils" séparé
+  'sont-elles':     { ipa: 'sɔ̃tɛl',       alt: 'sontelles'    },
+  'ont-ils':        { ipa: 'ɔ̃til',        alt: 'ontils'       },
+  'ont-elles':      { ipa: 'ɔ̃tɛl',        alt: 'ontelles'     },
+  'vont-ils':       { ipa: 'vɔ̃til',       alt: 'vontils'      },
+  'vont-elles':     { ipa: 'vɔ̃tɛl',       alt: 'vontelles'    },
+  'peuvent-ils':    { ipa: 'pœvtil',      alt: 'peuventils'   },
+  'doivent-ils':    { ipa: 'dwavtil',     alt: 'doiventils'   },
+
+  // ── Bregan D'aerthe : composé à gérer comme une unité ───────────────────
+  // L'enchaînement "Bregan" + élision "D'aerthe" (substitué en "Dersse") devient
+  // "Breganders" dans la transcription Whisper. On force la pause.
+  'Bregan D’aerthe':{ ipa: 'bʁegan dɛʁs',  alt: 'Brégane Derce'},
+
+  // ── Mots rares qui font buguer le TTS (suite) ───────────────────────────
+  'l’artefact':     { ipa: 'laʁtəfakt',   alt: 'l’artefact'   },  // 5x ePub, transcrit autrement
+
+  // ── Noms propres Elric (Moorcock) — basés sur l'analyse Whisper du Tome 2 ─
+  // Corrections identifiées en comparant la transcription d'un échantillon
+  // audio de "La Forteresse de la Perle" avec le texte ePub source.
+  // Chaque entrée précise la prononciation IPA (Neural2/WaveNet) et un alt
+  // textuel correct lu naturellement par Chirp3 après strip du <phoneme>.
+  'Melniboné':      { ipa: 'mɛlnibɔne',    alt: 'Melniboné'    },  // était lu "Melny Bonnet" en deux mots
+  'Melniboné.':     { ipa: 'mɛlnibɔne',    alt: 'Melniboné'    },  // variante fin de phrase
+  'melnibonéen':    { ipa: 'mɛlnibɔneɛ̃',  alt: 'melnibonéen'  },  // adjectif
+  'Quarzhasaat':    { ipa: 'kwaʁzasat',    alt: 'Quarzasaat'   },  // était lu "Kwarza Saat" / "Quarzassat" / "Quarzazate" (3 variantes !)
+  'Quarzhazaat':    { ipa: 'kwaʁzasat',    alt: 'Quarzasaat'   },  // variante orthographique
+  'Yyrkoon':        { ipa: 'jiʁkun',       alt: 'Yirkoune'     },  // était lu "Irkoun" / "Yirkun"
+  'Rackhir':        { ipa: 'ʁakiʁ',        alt: 'Rakir'        },  // kh → k, r final muet
+  'Filkhar':        { ipa: 'filkaʁ',       alt: 'Filkar'       },  // était lu "Filcar"
+  'Tanelorne':      { ipa: 'tanəlɔʁn',     alt: 'Tanelorne'    },  // était lu "Tannélorme"
+  'Karlaak':        { ipa: 'kaʁlak',       alt: 'Karlaak'      },  // était lu "Carlac"
+  'Ufych-Sormeer':  { ipa: 'yfiksɔʁmeʁ',   alt: 'Ufyk-Sormeer' },  // était lu "Uffich-Sormer"
+  'Actorios':       { ipa: 'aktɔʁjɔs',     alt: 'Actorios'     },  // l'Actorios — liaison cassée → "Lactorios"
+  'albinos':        { ipa: 'albinos',      alt: 'albinos'      },  // s final pronouncé (pas muet)
+
+  // ── Entrées <lang> : prononciation dans une autre langue ─────────────────
+  // Noms d'épées Elric prononcés à l'anglaise. Sur Chirp3 (qui ne supporte
+  // pas <lang>), mon sanitizer strippe le tag et Google lit l'alt avec
+  // phonétique française — fallback acceptable.
+  'Stormbringer':   { lang: 'en-GB', alt: 'Stormbringer' },
+  'Mournblade':     { lang: 'en-GB', alt: 'Mournblade'   },
+
+  // ── Verbes avec élision : on aiguille Chirp3 vers un mot français RÉEL ───
+  // Chirp3 segmente "l'échapper" et "léchapper" parce que l'infinitif après
+  // élision crée une ambiguïté. Astuce : utiliser comme alt un mot RÉEL du
+  // français qui se prononce identiquement → Chirp3 le trouve dans son
+  // dictionnaire et le lit fluidement.
+  //   "l'échapper" /leʃape/ → alt = "l'échappée" (le nom féminin, /leʃape/)
+  //   "d'échapper" /deʃape/ → alt = "d'échappée" (idem avec d')
+  // Neural2/WaveNet utilisent l'IPA via ph donc rien ne change pour eux.
+  'léchapper':      { ipa: 'leʃape',  alt: 'l’échappée'  },
+  'déchapper':      { ipa: 'deʃape',  alt: 'd’échappée'  },
+
+  // ── étui / étuit (cas du fourreau d'épée en fantasy) ─────────────────────
+  // Post-fusion : "l'étui" → "létui", "l'étuit" → "létuit".
+  // Prononciation /letɥi/ (le ɥ = "u" de "lui"). Alt = forme avec apostrophe
+  // pour aider Chirp3 (mot français réel qu'il connaît).
+  'létui':          { ipa: 'letɥi', alt: 'l’étui' },
+  'létuit':         { ipa: 'letɥi', alt: 'l’étui' },
+  'détui':          { ipa: 'detɥi', alt: 'd’étui' },
+  'détuit':         { ipa: 'detɥi', alt: 'd’étui' },
+  // Formes sans élision aussi (au cas où "étui" apparaît seul ou après autre mot)
+  'étui':           { ipa: 'etɥi',  alt: 'étui'    },
+  'étuit':          { ipa: 'etɥi',  alt: 'étui'    },
+  'étuis':          { ipa: 'etɥi',  alt: 'étui'    },
+};
+
+function fixSSMLElisions(ssml) {
+  // 1) NFC : recompose les accents combinants (e + ́ → é précomposé)
+  ssml = ssml.normalize('NFC');
+  // 2) Normalise les apostrophes UNIQUEMENT dans le TEXTE hors balises XML.
+  //    Si on normalisait tout le SSML, les attributs comme <break time="100ms"/>
+  //    verraient leurs guillemets convertis en typographiques (« ») et l'XML
+  //    deviendrait invalide → Google rejette en 400.
+  ssml = ssml.replace(/<[^>]*>|[^<]+/g, seg =>
+    seg.startsWith('<') ? seg : seg.replace(APOS_VARIANTS, APOS)
+  );
+  // 2b) Dans les balises XML, force les guillemets d'attributs en ASCII " :
+  //     si Claude (ou ma normalisation passée) a laissé des typographiques
+  //     dans les attributs, on les convertit en guillemets droits.
+  ssml = ssml.replace(/<[^>]+>/g, tag =>
+    tag.replace(/=\s*[‘’‚‛]([^‘’‚‛<>]*)[‘’‚‛]/g, '="$1"')
+  );
+  const ELI = 'l|d|n|m|t|s|c|j|qu|jusqu|lorsqu|puisqu|quoiqu|aujourd';
+  // Plusieurs passes pour gérer les imbrications (ex: <p><emphasis>l'</emphasis>âme</p>)
+  let prev, pass = 0;
+  do {
+    prev = ssml;
+    // 1) espace(s)/tag(s) auto-fermants entre apostrophe et lettre suivante → retire
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})${APOS}(?:\\s|<[^>]+/>)+(\\p{L})`, 'giu'), `$1${APOS}$2`);
+    // 2) balise ouvrante glissée entre élision et mot → on la déplace AVANT l'élision
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})${APOS}(<[^/][^>]*[^/]>)(\\p{L})`, 'giu'), `$2$1${APOS}$3`);
+    // 3) balise fermante juste après l'apostrophe → on l'envoie après le mot
+    ssml = ssml.replace(new RegExp(`\\b(${ELI})${APOS}(</[^>]+>)\\s*(\\p{L}+)`, 'giu'), `$1${APOS}$3$2`);
+    pass++;
+  } while (prev !== ssml && pass < 5);
+
+  // 4) FUSION INLINE CHIRURGICALE : on supprime l'apostrophe UNIQUEMENT quand
+  //    le mot suivant commence par une VOYELLE ACCENTUÉE. C'est le seul cas
+  //    où Google TTS Neural2 cassait la liaison (l'épier, l'âme, L'Éclat,
+  //    c'était). Pour les voyelles non accentuées (j'en, n'y, qu'a, d'eau),
+  //    Google fait correctement la liaison native — on garde l'apostrophe,
+  //    sinon "j'en" devient "jen" (lu comme un nom propre /ʒɛn/) et "n'y"
+  //    devient "ny" (lu N-Y comme un sigle).
+  const ACCENT_V = 'àáâãäåèéêëìíîïòóôõöùúûüýÿÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝŸ';
+  ssml = ssml.replace(
+    new RegExp(`\\b(${ELI})${APOS}([${ACCENT_V}]\\p{L}*)`, 'giu'),
+    '$1$2'
+  );
+
+  // 5) Gestion <prosody>/<emphasis>/<lang> :
+  //    - On GARDE les <prosody> qui wrappent une phrase entière (>= 40 chars
+  //      de contenu) → variation rythmique au niveau phrase, sans risque
+  //      d'introduire des micro-pauses dans les liaisons.
+  //    - On STRIP les <prosody>/<emphasis> au niveau MOT (< 40 chars de
+  //      contenu) → ces wrappers courts cassent les liaisons français.
+  //    - On STRIP TOUTES les <lang> (forçaient prononciation anglaise).
+  ssml = ssml.replace(/<(prosody|emphasis)([^>]*)>([\s\S]*?)<\/\1>/g,
+    (m, tag, attrs, content) => content.length >= 40 ? m : content
+  );
+  ssml = ssml.replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1');
+  // <say-as ...> : Claude le génère parfois par erreur autour d'un mot normal,
+  // ce qui fait que Google TTS épelle lettre par lettre ("é p é e" pour épée).
+  // On strippe systématiquement — pas d'usage légitime pour de la narration.
+  ssml = ssml.replace(/<say-as[^>]*>([\s\S]*?)<\/say-as>/g, '$1');
+  ssml = ssml.replace(/<\/?say-as[^>]*>/g, ''); // orphelins
+  // Nettoyage des balises orphelines (ouvrantes OU fermantes seules)
+  ssml = ssml.replace(/<\/?(emphasis|prosody|lang)(\s[^>]*)?>/g, '');
+
+  // 5b) <break> : doit TOUJOURS être auto-fermant (<break/>), JAMAIS de
+  //     paire <break>...</break>. Claude génère des variantes absurdes :
+  //       </break>                    → supprimer
+  //       </break time="100ms"/>      → supprimer (fermante avec attributs)
+  //       </break ...n'importe quoi>  → supprimer
+  //       <break time="100ms">        → ajouter / final
+  //     On normalise tout via une regex permissive sur la balise fermante.
+  ssml = ssml.replace(/<\/break\b[^>]*>/gi, '');
+  ssml = ssml.replace(/<break(\s[^>]*?)?>/gi, (m, attrs) => {
+    const a = attrs || '';
+    return a.endsWith('/') ? m : `<break${a}/>`;
+  });
+
+  // 6) Prononciations personnalisées : deux formats supportés
+  //    - STRING       → substitution textuelle directe
+  //    - { ipa: '…' } → wrap dans <phoneme alphabet="ipa" ph="…">…</phoneme>
+  //    pour forcer Google TTS à prononcer exactement l'IPA fourni.
+  const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const [name, value] of Object.entries(PRONUNCIATIONS)) {
+    // BUG : \b en JavaScript n'est PAS Unicode-aware → é/à/œ/etc. ne sont
+    // pas considérés comme word chars. Conséquence : \bX\b pour un mot
+    // finissant par 'é' (lété, été, dété…) n'avait jamais sa frontière
+    // de fin valide. On remplace par lookbehind/lookahead Unicode-aware.
+    const re = new RegExp(
+      `(?<![\\p{L}\\p{N}])${escapeRegex(name)}(?![\\p{L}\\p{N}])`,
+      'giu'
+    );
+    if (typeof value === 'string') {
+      ssml = ssml.replace(re, value);
+    } else if (value && value.ipa) {
+      ssml = ssml.replace(re, (m) =>
+        `<phoneme alphabet="ipa" ph="${value.ipa}">${value.alt || m}</phoneme>`
+      );
+    } else if (value && value.lang) {
+      // Wrap dans <lang xml:lang="…"> pour basculer Google sur une autre langue
+      // (ex: en-GB pour prononcer "Stormbringer" comme un anglais).
+      // L'alt est le texte interne (lu par Chirp3 si le tag est strippé).
+      ssml = ssml.replace(re, (m) =>
+        `<lang xml:lang="${value.lang}">${value.alt || m}</lang>`
+      );
+    }
+  }
+
+  return ssml;
+}
+
+function normalizeFrenchText(s) {
+  return s
+    // 0) NFC : recompose les accents combinants → "e" + ́ devient "é" précomposé,
+    //    sinon \p{L} ne matche que la lettre nue et l'accent reste flottant,
+    //    cassant la concaténation "l'é..." vs "l'e ́...".
+    .normalize('NFC')
+    // Toutes les variantes d'apostrophe → ' TYPOGRAPHIQUE (U+2019).
+    // Google TTS reconnaît mieux les élisions françaises avec ' qu'avec '
+    // (qu'il peut traiter comme une contraction anglaise type "I'm"/"L's").
+    .replace(APOS_VARIANTS, APOS)
+    // Espaces insécables et fines → espace normal
+    .replace(/[     ]/g, ' ')
+    // Caractères invisibles à supprimer (cassent les mots en TTS) :
+    //   U+00AD SOFT HYPHEN : invisible mais Google TTS y coupe le mot →
+    //   "exemple" devient "x emple", "exact" devient "x act", etc.
+    //   Plus les zero-width (U+200B/C/D), word-joiner (U+2060), BOM (U+FEFF)
+    .replace(/[­​‌‍⁠﻿]/g, '')
+    // Resserre les apostrophes d'élision : "l ' homme" / "l' homme" → "l'homme"
+    .replace(new RegExp(`(\\p{L})\\s*${APOS}\\s*(\\p{L})`, 'gu'), `$1${APOS}$2`)
+    // Strip émojis et symboles décoratifs : 🎯 ⭐ ❤️ etc. → rien.
+    // Couvre les blocs Unicode Emoji + Misc Symbols + Dingbats + Variation Selectors.
+    .replace(/[\u{1F300}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F000}-\u{1F2FF}]/gu, '')
+    // Strip émoticônes ASCII : :) :-D :( ;-) <3 etc.
+    .replace(/(?<![\p{L}\p{N}])(?:[:;=8][\-^o]?[)D(P\\\/3]|<3|XD|:'\(|:'\))(?![\p{L}\p{N}])/gu, '')
+    // Expansion "qu'" devant consonne (contraction informelle non standard) :
+    //   "qu'je suis" → "que je suis"  "qu'tu sais" → "que tu sais"
+    //   En français standard, qu' n'élide QUE devant voyelle. Devant consonne,
+    //   c'est un raccourci de langage parlé qui fait bafouiller le TTS.
+    .replace(new RegExp(`\\bqu${APOS}([bcdfghjklmnpqrstvwxz])`, 'gi'), 'que $1');
+}
+
+// Force-split d'une phrase trop longue aux ponctuations secondaires.
+// Google TTS rejette les "phrases" dépassant ~400 chars sans ponctuation
+// de fin reconnue. On découpe agressivement aux tirets d'incise, points-virgules,
+// deux-points, virgules — puis en dernier ressort aux frontières de mot.
+function forceSplitLongSentence(s, maxLen) {
+  const parts = [];
+  let remaining = s;
+  const seps = ['—', '–', '; ', ': ', ', '];
+  while (remaining.length > maxLen) {
+    let cutAt = -1;
+    for (const sep of seps) {
+      const idx = remaining.lastIndexOf(sep, maxLen);
+      if (idx > maxLen / 2) { cutAt = idx + sep.length; break; }
+    }
+    if (cutAt === -1) {
+      cutAt = remaining.lastIndexOf(' ', maxLen);
+      if (cutAt === -1) cutAt = maxLen; // dernier ressort : coupe brutale
+    }
+    parts.push(remaining.slice(0, cutAt).trim());
+    remaining = remaining.slice(cutAt).trim();
+  }
+  if (remaining.length > 0) parts.push(remaining);
+  return parts.filter(p => p.length > 3);
+}
+
+function segmentChapter(ch) {
+  const result = [];
+  const MAX_LEN = 280;        // longueur cible par segment
+  const HARD_LIMIT = 380;     // au-delà : force-split
+  const paragraphs = ch.text.split(/\n{2,}/).map(p => normalizeFrenchText(p.replace(/\s+/g,' ')).trim()).filter(p => p.length > 10);
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    const para = paragraphs[pi];
+    const isLastPara = pi === paragraphs.length - 1;
+    if (para.length <= 300) {
+      result.push({ text: para, gapMs: isLastPara ? 650 : sentenceGapMs(para) });
+      continue;
+    }
+    const raw = para.split(/(?<=[.!?»…])\s+/).map(s => s.trim()).filter(s => s.length > 3);
+    let buf = '';
+    for (let si = 0; si < raw.length; si++) {
+      // Si une "phrase" individuelle dépasse HARD_LIMIT (cas Google qui plante),
+      // on la pré-découpe aux ponctuations secondaires AVANT le buffer-mering.
+      const candidates = raw[si].length > HARD_LIMIT
+        ? forceSplitLongSentence(raw[si], HARD_LIMIT)
+        : [raw[si]];
+      for (const s of candidates) {
+        if ((buf+' '+s).trim().length > MAX_LEN && buf.length > 0) {
+          result.push({ text: buf.trim(), gapMs: sentenceGapMs(buf) });
+          buf = s;
+        } else { buf = buf ? buf+' '+s : s; }
+      }
+    }
+    if (buf.trim().length > 3)
+      result.push({ text: buf.trim(), gapMs: isLastPara ? 650 : sentenceGapMs(buf) });
+  }
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLAUDE TRANSLATION (anglais → français) — optimisée pour le coût
+// ─────────────────────────────────────────────────────────────────────────────
+// Optimisations vs version initiale (réduit le coût ~80%) :
+//   1. Modèle Haiku 4.5 (≈ 5× moins cher que Sonnet 4.6, qualité littéraire OK)
+//   2. Chunks larges (~9000 chars) → moins d'appels donc moins d'overhead prompt
+//   3. Prompt court (instructions condensées)
+async function translateText(text) {
+  if (!text || text.trim().length === 0) return text;
+  const MAX_CHARS = 9000;
+
+  const paragraphs = text.split(/\n{2,}/);
+  const chunks = [];
+  let buf = '';
+  for (const p of paragraphs) {
+    if (buf.length + p.length + 2 > MAX_CHARS && buf.length > 0) {
+      chunks.push(buf); buf = p;
+    } else {
+      buf = buf ? buf + '\n\n' + p : p;
+    }
+  }
+  if (buf.length > 0) chunks.push(buf);
+
+  const translatedChunks = [];
+  for (let ci = 0; ci < chunks.length; ci++) {
+    // Prompt minimal : 4 règles essentielles, pas de redondance
+    const prompt = `Traduis ce texte anglais en français littéraire. Garde les noms propres tels quels, utilise « » pour les dialogues, préserve les paragraphes avec \\n\\n, retourne UNIQUEMENT la traduction sans aucun préambule.
+
+${chunks[ci]}`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': claudeApiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5',  // 5× moins cher que Sonnet 4.6, qualité OK pour traduction
+        max_tokens: 16000,           // permet une output longue (français ~10-15% plus volumineux)
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${errBody.slice(0,200)}`);
+    }
+    const data = await resp.json();
+    const translated = data.content?.map(c => c.text || '').join('').trim() || '';
+    if (!translated) throw new Error('Réponse de traduction vide');
+    translatedChunks.push(translated);
+  }
+  return translatedChunks.join('\n\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLAUDE SSML BATCH
+// ─────────────────────────────────────────────────────────────────────────────
+async function generateSSMLBatch(sentences) {
+  // Si Claude est désactivé via le toggle, on génère un SSML simple sans
+  // appel API : chaque phrase est juste enveloppée dans <speak> puis traitée
+  // par fixSSMLElisions (qui applique les substitutions personnalisées et
+  // les corrections d'élision). Zéro coût API Anthropic.
+  const claudeToggle = document.getElementById('claudeToggle');
+  if (claudeToggle && !claudeToggle.checked) {
+    return sentences.map(s => fixSSMLElisions(`<speak>${escapeXml(s)}</speak>`));
+  }
+
+  const prompt = `Tu es un expert en narration de livres audio en français pour Google Cloud TTS Neural2.
+
+Transforme chaque bloc numéroté en SSML valide pour une lecture FLUIDE et NATURELLE.
+Balises disponibles : <break time="Xms"/>, <emphasis level="strong|moderate|reduced">, <prosody rate="X%" pitch="Xst">
+
+RÈGLES ESSENTIELLES — FLUIDITÉ AVANT TOUT :
+- ÉLISIONS / LIAISONS D'APOSTROPHE — RÈGLE ABSOLUE :
+  Une élision (l', d', n', m', t', s', c', j', qu', lorsqu', puisqu', quoiqu', jusqu', aujourd') et le mot qui suit forment UNE SEULE UNITÉ phonétique. Aucune balise, aucun espace ne doit jamais s'intercaler entre l'apostrophe et le mot suivant — y compris quand ce mot commence par une voyelle accentuée (à, é, è, ê, î, ô, û, â, ï…).
+  ✓ CORRECT   : "Il <emphasis>n'aime</emphasis> pas." / "<prosody rate=\"95%\">l'épée brillait</prosody>" / "<emphasis>l'âme</emphasis>" / "qu'à"
+  ✗ INTERDIT  : "Il n'<emphasis>aime</emphasis> pas." / "l' épée" / "n' était" / "qu' à" / "l'<emphasis>âme</emphasis>" / "d'<prosody>écrire</prosody>"
+  Si une emphase ou prosodie concerne un mot élidé, la balise englobe TOUJOURS l'élision ET le mot complet (avec ses accents) ensemble : <emphasis>l'épée</emphasis>, JAMAIS l'<emphasis>épée</emphasis>.
+- APOSTROPHE : utilise EXCLUSIVEMENT l'apostrophe typographique française ' (U+2019) dans tout le SSML, et JAMAIS l'apostrophe ASCII droite ' (U+0027) ni aucune autre variante. C'est la convention française et celle que Google TTS attend pour reconnaître les élisions.
+- NE PAS ajouter de <break> sur les virgules (la voix Neural2 gère les pauses naturellement)
+- NE PAS ajouter de <break> après les points (le TTS insère déjà une pause, ajouter une pause = double silence)
+- Point-virgule / deux-points → <break time="150ms"/> UNIQUEMENT si la phrase est longue (>15 mots)
+- Tiret d'incise (— …) → <break time="100ms"/> avant et après
+
+— VARIATION DU RYTHME ET DE L'INTONATION (CRUCIAL pour éviter la monotonie) :
+  Chaque phrase doit avoir SON propre tempo et SA propre couleur tonale.
+  Utilise <prosody> UNIQUEMENT au niveau de la phrase ENTIÈRE (jamais sur des mots isolés),
+  en wrappant le contenu du <speak> selon le TYPE de phrase :
+
+  • Dialogue (commence par « ou —) :
+      <prosody rate="96%" pitch="+1st">…</prosody>   ← légèrement ralenti, voix portée
+  • Question (se termine par ?) :
+      <prosody rate="98%" pitch="+1st">…</prosody>   ← intonation montante naturelle
+  • Exclamation (se termine par !) :
+      <prosody rate="105%" pitch="+2st">…</prosody>  ← plus rapide, plus aigu
+  • Description / paysage (phrase évoquant ambiance, décor, métaphore) :
+      <prosody rate="94%" pitch="-1st">…</prosody>   ← ralenti, voix posée
+  • Action rapide (combat, course, urgence) :
+      <prosody rate="106%">…</prosody>               ← accéléré, tendu
+  • Réflexion intérieure / pensée du personnage :
+      <prosody rate="93%" pitch="-1st">…</prosody>   ← intimiste, plus lent
+  • Narration neutre (descriptif, transition) :
+      pas de <prosody>, laisse le débit naturel.
+
+  ALTERNANCE OBLIGATOIRE : deux phrases consécutives du même type doivent légèrement
+  varier (par exemple rate=96% puis rate=98% sur deux dialogues d'affilée) pour éviter
+  un effet "machine répétitive".
+
+- INTERDICTION FORMELLE : pas d'<emphasis> ni de <prosody> sur des MOTS ou des GROUPES
+  COURTS de moins de 40 caractères. Toute prosody/emphasis qui ne wrappe pas une phrase
+  entière sera ignorée par le post-traitement (et risque de casser les liaisons).
+- N'utilise JAMAIS la balise <say-as>. Tous les mots doivent être lus normalement
+  comme du français standard. <say-as interpret-as="characters"> fait épeler
+  lettre par lettre (ex: "épée" lu "é-p-é-e") — totalement indésirable.
+- NOMS PROPRES : lis-les avec la prononciation française, JAMAIS avec une prononciation anglaise. N'utilise PAS la balise <lang xml:lang="en-GB"> ni aucune autre balise <lang>. Tous les noms propres sont lus tels qu'écrits en suivant la phonétique française.
+- OBJECTIF : lecture vivante, comme un narrateur professionnel qui module son débit
+  selon le contenu, sans à-coups internes aux phrases ni silences artificiels entre elles.
+
+Chaque bloc DOIT être encapsulé dans <speak>…</speak>.
+
+CONTRAINTE JSON CRITIQUE :
+- Retourne UNIQUEMENT un tableau JSON : [{"i":0,"ssml":"<speak>…</speak>"},…]
+- Aucun texte autour, aucun markdown, aucune backtick.
+- DANS LE TEXTE DU SSML, n'utilise JAMAIS de guillemets droits " (U+0022) car ils cassent le JSON wrapper. Utilise EXCLUSIVEMENT les guillemets français typographiques « » pour les dialogues et citations. Pour les attributs SSML eux-mêmes (rate, pitch, etc.), tu peux utiliser " mais sans guillemets imbriqués dans la valeur.
+- Pas de barre oblique inverse \\ dans le texte du SSML.
+- Pas de saut de ligne \\n dans les chaînes SSML.
+
+Blocs :
+${sentences.map((s,i)=>`${i}. ${s}`).join('\n')}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'x-api-key': claudeApiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6',
+        // 2000 était trop bas pour des batches de 8 phrases avec SSML enrichi
+        // (Claude tronquait, le JSON était invalide, on tombait dans le catch
+        //  qui renvoyait le texte brut avec apostrophes — élisions cassées).
+        max_tokens:8000,
+        messages:[{role:'user', content:prompt}]
+      })
+    });
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      throw new Error(`Claude HTTP ${resp.status}: ${errBody.slice(0,200)}`);
+    }
+    const data = await resp.json();
+    const raw  = data.content?.map(c=>c.text||'').join('') || '';
+    if (!raw) throw new Error(`Empty Claude response: ${JSON.stringify(data).slice(0,200)}`);
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error(`No JSON in response: ${raw.slice(0,200)}`);
+
+    // Parse robuste : si JSON.parse échoue (souvent à cause de " non échappés
+    // dans le SSML), on tente de récupérer chaque entrée individuellement via
+    // regex au lieu de tout perdre. CRITIQUE : on dé-échappe ensuite les
+    // séquences JSON sinon des \" littéraux passent dans le SSML envoyé à
+    // Google et invalident le XML.
+    let arr;
+    try {
+      arr = JSON.parse(match[0]);
+    } catch (parseErr) {
+      console.warn('JSON.parse a échoué, tentative de récupération par regex…', parseErr.message);
+      arr = [];
+      const re = /\{\s*"i"\s*:\s*(\d+)\s*,\s*"ssml"\s*:\s*"([\s\S]*?)"\s*\}/g;
+      const unescapeJsonStr = s => s
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\\//g, '/')
+        .replace(/\\n/g, ' ')
+        .replace(/\\r/g, '')
+        .replace(/\\t/g, ' ')
+        .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+      let m;
+      while ((m = re.exec(match[0])) !== null) {
+        arr.push({ i: parseInt(m[1], 10), ssml: unescapeJsonStr(m[2]) });
+      }
+      if (arr.length === 0) throw parseErr;
+      console.log(`✓ Récupéré ${arr.length} SSML via regex tolérante (dé-échappés)`);
+    }
+
+    return sentences.map((s, i) => {
+      const found = arr.find(x => x.i === i);
+      const ssml = found?.ssml || `<speak>${escapeXml(s)}</speak>`;
+      return fixSSMLElisions(ssml);
+    });
+  } catch(e) {
+    console.error('Claude SSML error (fallback avec fixSSMLElisions):', e);
+    // CRITIQUE : même dans le fallback on doit appliquer fixSSMLElisions
+    // pour supprimer les apostrophes, sinon les élisions restent cassées
+    // sur tout le chapitre où Claude a échoué.
+    return sentences.map(s => fixSSMLElisions(`<speak>${escapeXml(s)}</speak>`));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOOGLE TTS
+// ─────────────────────────────────────────────────────────────────────────────
+// Chirp3-HD ne supporte pas <prosody>, <emphasis>, <lang> → on les retire en conservant le texte
+function sanitizeSSMLForChirp3(ssml) {
+  return ssml
+    .replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1')
+    .replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1')
+    .replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1')
+    .replace(/<say-as[^>]*>([\s\S]*?)<\/say-as>/g, '$1')
+    // <sub alias="X">Y</sub> non supporté par Chirp3 → on garde l'alias (X) qui
+    // est la forme concaténée sans apostrophe, garantissant la liaison.
+    .replace(/<sub\s+alias="([^"]*)"[^>]*>[\s\S]*?<\/sub>/g, '$1')
+    // <phoneme> non supporté par Chirp3 → on garde le texte interne (qui est
+    // intact car protégé de l'étape 7 dans fixSSMLElisions).
+    .replace(/<phoneme[^>]*>([\s\S]*?)<\/phoneme>/g, '$1');
+}
+
+function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
+// Note : getVoiceTier() et USD_TO_EUR sont définis plus haut (avant le boot)
+// car le bandeau de conso s'initialise dès le chargement de la page.
+
+// Compteur global pour limiter le nombre de logs SSML (sinon spam console)
+let __ssmlDebugCount = 0;
+const SSML_DEBUG_MAX = 10;
+
+// ─── Cache audio TTS (IndexedDB, persistant) ─────────────────────────────
+// Évite la re-facturation Google lors de ré-encodages successifs.
+// Clé = SHA-256(SSML + voix + audioConfig) → toute modif invalide l'entrée.
+const TTS_CACHE_DB = 'epubson-tts-cache';
+const TTS_CACHE_STORE = 'audio';
+
+let __ttsCacheStats = { hits: 0, misses: 0, savedChars: 0 };
+let __ttsCacheDB = null;
+
+function openTTSCache() {
+  if (__ttsCacheDB) return Promise.resolve(__ttsCacheDB);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(TTS_CACHE_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(TTS_CACHE_STORE)) {
+        const store = db.createObjectStore(TTS_CACHE_STORE, { keyPath: 'hash' });
+        store.createIndex('createdAt', 'createdAt');
+      }
+    };
+    req.onsuccess = () => { __ttsCacheDB = req.result; resolve(__ttsCacheDB); };
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function sha256Hex(str) {
+  const buf = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function ttsCacheKey(ssml, voice, audioConfig) {
+  return await sha256Hex(JSON.stringify({ s: ssml, v: voice, a: audioConfig }));
+}
+
+async function ttsCacheGet(hash) {
+  try {
+    const db = await openTTSCache();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(TTS_CACHE_STORE, 'readonly');
+      const req = tx.objectStore(TTS_CACHE_STORE).get(hash);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror   = () => resolve(null);
+    });
+  } catch (_) { return null; }
+}
+
+async function ttsCachePut(hash, audioBuffer, charCount, voice) {
+  try {
+    const db = await openTTSCache();
+    await new Promise((resolve) => {
+      const tx = db.transaction(TTS_CACHE_STORE, 'readwrite');
+      tx.objectStore(TTS_CACHE_STORE).put({
+        hash, audio: audioBuffer, chars: charCount, voice, createdAt: Date.now()
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve();
+      tx.onabort    = () => resolve();
+    });
+  } catch (_) {}
+}
+
+async function ttsCacheStats() {
+  try {
+    const db = await openTTSCache();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(TTS_CACHE_STORE, 'readonly');
+      const all = tx.objectStore(TTS_CACHE_STORE).getAll();
+      all.onsuccess = () => {
+        let bytes = 0, chars = 0;
+        for (const it of all.result) {
+          bytes += it.audio?.byteLength || 0;
+          chars += it.chars || 0;
+        }
+        resolve({ count: all.result.length, bytes, chars });
+      };
+      all.onerror = () => resolve({ count: 0, bytes: 0, chars: 0 });
+    });
+  } catch (_) { return { count: 0, bytes: 0, chars: 0 }; }
+}
+
+async function ttsCacheClear() {
+  try {
+    const db = await openTTSCache();
+    await new Promise((resolve) => {
+      const tx = db.transaction(TTS_CACHE_STORE, 'readwrite');
+      tx.objectStore(TTS_CACHE_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve();
+    });
+    __ttsCacheStats = { hits: 0, misses: 0, savedChars: 0 };
+  } catch (_) {}
+}
+
+async function googleTTS(ssml, retries = 12) {
+  const chirp3 = isChirp3(selectedVoice);
+  const inputSSML = chirp3 ? sanitizeSSMLForChirp3(ssml) : ssml;
+
+  // DEBUG : affiche les 10 premières SSML envoyées à Google TTS dans la console,
+  // pour vérifier si la suppression d'apostrophes / élisions fusionnées sont
+  // bien appliquées. Cherche les mots problématiques (lépier, LÉclat, etc.)
+  if (__ssmlDebugCount < SSML_DEBUG_MAX) {
+    __ssmlDebugCount++;
+    const hasApostrophe = /['‘’‚‛ʹʻʼʽˈ`´́]/.test(inputSSML);
+    console.log(
+      `%c[SSML #${__ssmlDebugCount}]${hasApostrophe ? ' ⚠ APOSTROPHE PRÉSENTE' : ' ✓ aucune apostrophe'}`,
+      `color:${hasApostrophe ? '#fca5a5' : '#86efac'};font-weight:bold`
+    );
+    console.log(inputSSML);
+  }
+
+  const audioConfig = chirp3
+    ? { audioEncoding:'LINEAR16', sampleRateHertz:44100 }
+    : { audioEncoding:'LINEAR16', sampleRateHertz:44100, speakingRate:1.04, pitch:0, effectsProfileId:['headphone-class-device'] };
+
+  // ─── CACHE LOOKUP : évite la re-facturation Google ───
+  const cacheHash = await ttsCacheKey(inputSSML, selectedVoice, audioConfig);
+  const cached = await ttsCacheGet(cacheHash);
+  if (cached && cached.audio) {
+    __ttsCacheStats.hits++;
+    __ttsCacheStats.savedChars += cached.chars || inputSSML.length;
+    return cached.audio;
+  }
+  __ttsCacheStats.misses++;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${gcpApiKey}`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          input:{ ssml: inputSSML },
+          voice:{ languageCode:'fr-FR', name: selectedVoice },
+          audioConfig
+        })
+      });
+      if (!resp.ok) {
+        const errBody = await resp.text();
+        let errMsg = 'TTS error';
+        try { errMsg = JSON.parse(errBody).error?.message || errMsg; } catch(_) {}
+        // Log COMPLET : status + message + SSML problématique pour diagnostic
+        console.group(`%c[Google TTS ${resp.status}] ${errMsg}`, 'color:#fca5a5;font-weight:bold');
+        console.log('SSML envoyé :', inputSSML);
+        console.log('Réponse Google :', errBody);
+        console.groupEnd();
+        const err = new Error(`${resp.status} ${errMsg}`);
+        err.status = resp.status;
+        throw err;
+      }
+      const data  = await resp.json();
+      const bytes = Uint8Array.from(atob(data.audioContent), c => c.charCodeAt(0));
+      // ─── CACHE WRITE : stocke pour les futurs ré-encodages ───
+      await ttsCachePut(cacheHash, bytes.buffer, inputSSML.length, selectedVoice);
+      // ─── COMPTEUR MENSUEL : appel Google effectif → on facture ───
+      addMonthlyChars(getVoiceTier(selectedVoice).tier, inputSSML.length);
+      try { refreshGlobalQuotaBanner(); } catch(_) {}
+      return bytes.buffer;
+    } catch(e) {
+      if (aborted) throw new Error('Aborted');
+      // 4xx (sauf 429 rate-limit) = SSML invalide → ne PAS réessayer, throw direct
+      const is4xxFatal = e.status && e.status >= 400 && e.status < 500 && e.status !== 429;
+      if (is4xxFatal) throw e;
+      if (attempt === retries - 1) throw e;
+      // Backoff exponentiel : 1s, 2s, 4s, 8s, 16s, 30s max
+      const wait = Math.min(1000 * Math.pow(2, attempt), 30000);
+      log(`⚠ Retry ${attempt+1}/${retries} dans ${(wait/1000).toFixed(0)}s — ${e.message}`,'err');
+      await sleep(wait);
+      // Attend que le réseau soit revenu avant de tenter à nouveau
+      await waitForOnline();
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ID3v2.4 TAG BUILDER — métadonnées (titre, auteur, album, genre Audiobook)
+// Note : pas de CHAP/CTOC, Apple Books ne les lit pas dans les MP3.
+// ─────────────────────────────────────────────────────────────────────────────
+function buildID3v2(title, author) {
+  const enc = new TextEncoder();
+  const syncsafe32 = n => [(n>>21)&0x7F, (n>>14)&0x7F, (n>>7)&0x7F, n&0x7F];
+
+  function makeTextFrame(id, text) {
+    const textBytes = enc.encode(text);
+    const data = new Uint8Array(1 + textBytes.length);
+    data[0] = 0x03; // UTF-8 (valide en ID3v2.4)
+    data.set(textBytes, 1);
+    const frame = new Uint8Array(10 + data.length);
+    frame.set(enc.encode(id), 0);
+    const ss = syncsafe32(data.length);
+    frame[4]=ss[0]; frame[5]=ss[1]; frame[6]=ss[2]; frame[7]=ss[3];
+    frame.set(data, 10);
+    return frame;
+  }
+
+  const frames = [
+    makeTextFrame('TIT2', title  || 'Audiobook'),
+    makeTextFrame('TPE1', author || 'Auteur inconnu'),
+    makeTextFrame('TALB', title  || 'Audiobook'),
+    makeTextFrame('TCON', 'Audiobook'),
+  ];
+
+  const total = frames.reduce((s,f) => s + f.length, 0);
+  const hdr = new Uint8Array(10);
+  hdr[0]=0x49; hdr[1]=0x44; hdr[2]=0x33;  // "ID3"
+  hdr[3]=0x04; hdr[4]=0x00;               // version 2.4.0
+  hdr[5]=0x00;                            // flags
+  const tagSize = syncsafe32(total);
+  hdr[6]=tagSize[0]; hdr[7]=tagSize[1]; hdr[8]=tagSize[2]; hdr[9]=tagSize[3];
+  return [hdr, ...frames];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M4B BUILDER — wrap AAC audio + chapters dans un container MP4/M4B
+// Compatible iTunes, Apple Music, Apple Books iOS (piste de chapitres QT)
+// ─────────────────────────────────────────────────────────────────────────────
+function buildM4B(aacFrames, chapters, title, author, sampleRate, coverBytes = null, coverMimeType = 'image/jpeg') {
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const te = new TextEncoder();
+  const u16 = v => { const a = new Uint8Array(2); a[0]=(v>>8)&0xFF; a[1]=v&0xFF; return a; };
+  const u32 = v => { const a = new Uint8Array(4); a[0]=(v>>>24)&0xFF; a[1]=(v>>>16)&0xFF; a[2]=(v>>>8)&0xFF; a[3]=v&0xFF; return a; };
+  const u8a = (...nums) => new Uint8Array(nums);
+  const cat = (...arrs) => {
+    let n = 0; for (const a of arrs) n += a.length;
+    const out = new Uint8Array(n);
+    let off = 0; for (const a of arrs) { out.set(a, off); off += a.length; }
+    return out;
+  };
+  const atom = (type, ...children) => {
+    let n = 8; for (const c of children) n += c.length;
+    const out = new Uint8Array(n);
+    out[0]=(n>>>24)&0xFF; out[1]=(n>>>16)&0xFF; out[2]=(n>>>8)&0xFF; out[3]=n&0xFF;
+    for (let i=0; i<4; i++) out[4+i] = type.charCodeAt(i);
+    let off = 8;
+    for (const c of children) { out.set(c, off); off += c.length; }
+    return out;
+  };
+
+  // ── Trames AAC (déjà fournies par WebCodecs, pas de parsing nécessaire) ───
+  // Chaque entrée de aacFrames est un Uint8Array d'une trame AAC raw (pas ADTS).
+  // Pour MP4, on stocke les trames raw concaténées dans mdat + stsz par trame.
+  if (!aacFrames || aacFrames.length === 0) throw new Error('Aucune trame AAC fournie');
+  const frames = aacFrames.map(buf => ({ size: buf.length, data: buf }));
+
+  // ── Échantillons texte des chapitres (format QuickTime) ────────────────────
+  //   2 octets big-endian (taille du texte) + texte UTF-8
+  const chapterSamples = chapters.map(ch => {
+    const t = te.encode(ch.title || 'Chapitre');
+    return cat(u16(t.length), t);
+  });
+
+  // ── Constantes timescales et IDs ──────────────────────────────────────────
+  const MOVIE_TS = 1000;
+  const AUDIO_TS = sampleRate;
+  const CHAPTER_TS = 1000;
+  const FRAME_SAMPLES = 1024; // AAC-LC frame size
+  const totalMs = chapters.length ? chapters[chapters.length-1].endMs : 0;
+  const audioMediaDuration = frames.length * FRAME_SAMPLES;
+  const AUDIO_TID = 1, CHAPTER_TID = 2;
+  const TS_BASE = u8a(0,0,0,0); // version (0) + flags (0,0,0)
+  const MATRIX = cat(u32(0x10000),u32(0),u32(0), u32(0),u32(0x10000),u32(0), u32(0),u32(0),u32(0x40000000));
+
+  // ── ftyp ──────────────────────────────────────────────────────────────────
+  const ftyp = atom('ftyp',
+    te.encode('M4B '), u32(0x200),
+    te.encode('M4B '), te.encode('mp42'), te.encode('isom')
+  );
+
+  // ── mvhd ──────────────────────────────────────────────────────────────────
+  const mvhd = atom('mvhd',
+    TS_BASE, u32(0), u32(0), u32(MOVIE_TS), u32(totalMs),
+    u32(0x10000), u16(0x0100), u16(0), u32(0), u32(0),
+    MATRIX,
+    u32(0),u32(0),u32(0),u32(0),u32(0),u32(0),  // pre_defined[6]
+    u32(3)  // next track ID
+  );
+
+  // ── esds (descripteur ES pour AAC-LC dans MP4) ─────────────────────────────
+  // ObjectTypeIndication = 0x40 (MPEG-4 Audio)
+  // AudioSpecificConfig 2 octets pour AAC-LC mono 44100Hz :
+  //   audioObjectType=2 (00010), samplingFreqIndex=4 pour 44100 (0100),
+  //   channelConfig=1 (0001), suivi de 3 bits réservés = 00010 0100 0001 000
+  //   = 0001 0010 0000 1000 = 0x12 0x08
+  //
+  // Longueurs :
+  //   DCD content = objType(1)+flags(1)+bufSize(3)+maxBR(4)+avgBR(4)
+  //               + DecSpecInfo header(5) + DecSpecInfo content(2) = 20
+  //   ES_Desc content = ES_ID(2)+flags(1) + DCD header(5)+DCD(20)
+  //                   + SLD header(5)+SLD(1) = 34
+  const SAMPLE_RATE_INDEX = { 96000:0, 88200:1, 64000:2, 48000:3, 44100:4, 32000:5, 24000:6, 22050:7, 16000:8 };
+  const srIdx = SAMPLE_RATE_INDEX[sampleRate] ?? 4;
+  // AudioSpecificConfig : (objType=2)<<11 | (srIdx)<<7 | (chCfg=1)<<3 | 0
+  const ascValue = (2 << 11) | (srIdx << 7) | (1 << 3);
+  const asc = u8a((ascValue >> 8) & 0xFF, ascValue & 0xFF);
+
+  const esds = atom('esds',
+    TS_BASE,
+    u8a(0x03, 0x80,0x80,0x80, 0x22),   // ES_Descriptor, len=34
+    u16(1), u8a(0),                      // ES_ID + flags
+    u8a(0x04, 0x80,0x80,0x80, 0x14),   // DecoderConfigDescriptor, len=20
+    u8a(0x40, 0x15, 0,0,0),              // objType=0x40 (MPEG-4 Audio) + streamType<<2|1 + bufSize
+    u32(96000), u32(96000),               // maxBitrate, avgBitrate (doit matcher l'encodeur)
+    u8a(0x05, 0x80,0x80,0x80, 0x02),   // DecoderSpecificInfo, len=2
+    asc,                                  // AudioSpecificConfig
+    u8a(0x06, 0x80,0x80,0x80, 0x01),   // SLConfigDescriptor, len=1
+    u8a(0x02)
+  );
+
+  // ── Sample entry audio (mp4a) ──────────────────────────────────────────────
+  const mp4a = atom('mp4a',
+    u8a(0,0,0,0,0,0), u16(1),            // reserved + data ref index
+    u32(0), u32(0),                       // reserved
+    u16(1), u16(16),                      // channelCount=1 (mono), sampleSize=16
+    u16(0), u16(0),                       // pre_defined + reserved
+    u32(AUDIO_TS << 16),                  // sampleRate (16.16 fixed point)
+    esds
+  );
+
+  // ── Sample entry chapter text (text format QuickTime, spec exacte) ────────
+  //   Layout standard : 6 reserved + data_ref_idx (u16)
+  //                   + display_flags (u32) + text_justification (i32)
+  //                   + bg_color RGB (3×u16 = 6B) + default_text_box (4×u16 = 8B)
+  //                   + reserved (2×u32 = 8B)
+  //                   + font_number (u16) + font_face (u16)
+  //                   + reserved (u8) + reserved (u16)
+  //                   + fg_color RGB (3×u16 = 6B) + text_name Pascal string
+  const textSampleEntry = atom('text',
+    u8a(0,0,0,0,0,0), u16(1),                  // reserved + data ref index
+    u32(0),                                    // display_flags = 0
+    u32(0),                                    // text_justification = 0 (left)
+    u16(0), u16(0), u16(0),                    // bg_color RGB (noir)
+    u16(0), u16(0), u16(0), u16(0),            // default_text_box (top, left, bottom, right)
+    u32(0), u32(0),                            // reserved
+    u16(0), u16(0),                            // font_number, font_face
+    u8a(0),                                    // reserved (u8)
+    u16(0),                                    // reserved (u16)
+    u16(0xFFFF), u16(0xFFFF), u16(0xFFFF),     // fg_color RGB (blanc)
+    u8a(0)                                     // text_name Pascal string (longueur 0)
+  );
+
+  // Atome 'text' (matrice 3x3 identité) requis dans gmhd pour les pistes texte
+  const gmhd_text = atom('text',
+    u32(0x10000), u32(0), u32(0),
+    u32(0), u32(0x10000), u32(0),
+    u32(0), u32(0), u32(0x40000000)
+  );
+
+  // ── Tables de samples (closure pour reconstruction) ────────────────────────
+  const audioFrameSizes = frames.map(f => f.size);
+  const chapterSampleSizes = chapterSamples.map(s => s.length);
+  const audioTotalSize = audioFrameSizes.reduce((a,b)=>a+b, 0);
+
+  // Construit l'arbre moov ; reçoit les offsets absolus dans le fichier final.
+  function buildMoov(audioStartOffset, chapterOffsets) {
+    // ── Audio trak ─────────────────────────────────────────────────────────
+    const audio_tkhd = atom('tkhd',
+      u8a(0,0,0,7),  // flags: track_enabled|in_movie|in_preview
+      u32(0), u32(0), u32(AUDIO_TID), u32(0), u32(totalMs),
+      u32(0), u32(0), u16(0), u16(0), u16(0x0100), u16(0),
+      MATRIX, u32(0), u32(0)
+    );
+    const audio_tref = atom('tref', atom('chap', u32(CHAPTER_TID)));
+    const audio_mdhd = atom('mdhd', TS_BASE, u32(0), u32(0), u32(AUDIO_TS), u32(audioMediaDuration), u16(0x55C4), u16(0));
+    const audio_hdlr = atom('hdlr', TS_BASE, u32(0), te.encode('soun'), u32(0), u32(0), u32(0), u8a(0));
+    const audio_smhd = atom('smhd', TS_BASE, u16(0), u16(0));
+    const audio_dref = atom('dref', TS_BASE, u32(1), atom('url ', u8a(0,0,0,1)));
+    const audio_dinf = atom('dinf', audio_dref);
+    const audio_stsd = atom('stsd', TS_BASE, u32(1), mp4a);
+    const audio_stts = atom('stts', TS_BASE, u32(1), u32(frames.length), u32(FRAME_SAMPLES));
+    const audio_stsc = atom('stsc', TS_BASE, u32(1), u32(1), u32(frames.length), u32(1));
+    // stsz : version+flags + sample_size=0 + count + sizes[]
+    // Optimisation : un seul Uint8Array (vs 1M+ petits objets via u32())
+    const stszBuf = new Uint8Array(12 + 4 * frames.length);
+    // [0..3] version+flags = 0 (déjà), [4..7] sample_size = 0 (déjà)
+    const fc = frames.length;
+    stszBuf[8]=(fc>>>24)&0xFF; stszBuf[9]=(fc>>>16)&0xFF;
+    stszBuf[10]=(fc>>>8)&0xFF; stszBuf[11]=fc&0xFF;
+    for (let i = 0; i < fc; i++) {
+      const sz = audioFrameSizes[i];
+      const o = 12 + i * 4;
+      stszBuf[o]=(sz>>>24)&0xFF; stszBuf[o+1]=(sz>>>16)&0xFF;
+      stszBuf[o+2]=(sz>>>8)&0xFF; stszBuf[o+3]=sz&0xFF;
+    }
+    const audio_stsz = atom('stsz', stszBuf);
+    const audio_stco = atom('stco', TS_BASE, u32(1), u32(audioStartOffset));
+    const audio_stbl = atom('stbl', audio_stsd, audio_stts, audio_stsc, audio_stsz, audio_stco);
+    const audio_minf = atom('minf', audio_smhd, audio_dinf, audio_stbl);
+    const audio_mdia = atom('mdia', audio_mdhd, audio_hdlr, audio_minf);
+    const audio_trak = atom('trak', audio_tkhd, audio_tref, audio_mdia);
+
+    // ── Chapter text trak ──────────────────────────────────────────────────
+    const chap_tkhd = atom('tkhd',
+      u8a(0,0,0,1),  // flags: track_enabled (mais pas in_movie, c'est une piste auxiliaire)
+      u32(0), u32(0), u32(CHAPTER_TID), u32(0), u32(totalMs),
+      u32(0), u32(0), u16(0), u16(0), u16(0), u16(0),
+      MATRIX, u32(0), u32(0)
+    );
+    const chap_mdhd = atom('mdhd', TS_BASE, u32(0), u32(0), u32(CHAPTER_TS), u32(totalMs), u16(0x55C4), u16(0));
+    const chap_hdlr = atom('hdlr', TS_BASE, u32(0), te.encode('text'), u32(0), u32(0), u32(0), u8a(0));
+    // gmhd (generic media header) pour piste texte
+    //   gmin : graphics_mode + opcolor + balance + reserved
+    //   text : matrice 3x3 (requise par Apple Books pour les pistes de chapitres)
+    const chap_gmin = atom('gmin', TS_BASE, u16(0x40), u16(0x8000), u16(0x8000), u16(0x8000), u16(0), u16(0));
+    const chap_gmhd = atom('gmhd', chap_gmin, gmhd_text);
+    const chap_dref = atom('dref', TS_BASE, u32(1), atom('url ', u8a(0,0,0,1)));
+    const chap_dinf = atom('dinf', chap_dref);
+    const chap_stsd = atom('stsd', TS_BASE, u32(1), textSampleEntry);
+    // stts : durée de chaque chapitre dans CHAPTER_TS (1000 = ms)
+    const sttsParts = [TS_BASE, u32(chapters.length)];
+    chapters.forEach(ch => { sttsParts.push(u32(1)); sttsParts.push(u32(ch.endMs - ch.startMs)); });
+    const chap_stts = atom('stts', ...sttsParts);
+    const chap_stsc = atom('stsc', TS_BASE, u32(1), u32(1), u32(1), u32(1));
+    const cStszParts = [TS_BASE, u32(0), u32(chapters.length)];
+    chapterSampleSizes.forEach(sz => cStszParts.push(u32(sz)));
+    const chap_stsz = atom('stsz', ...cStszParts);
+    const cStcoParts = [TS_BASE, u32(chapters.length)];
+    chapterOffsets.forEach(off => cStcoParts.push(u32(off)));
+    const chap_stco = atom('stco', ...cStcoParts);
+    const chap_stbl = atom('stbl', chap_stsd, chap_stts, chap_stsc, chap_stsz, chap_stco);
+    const chap_minf = atom('minf', chap_gmhd, chap_dinf, chap_stbl);
+    const chap_mdia = atom('mdia', chap_mdhd, chap_hdlr, chap_minf);
+    const chap_trak = atom('trak', chap_tkhd, chap_mdia);
+
+    // ── udta avec métadonnées iTunes-style (ilst) ──────────────────────────
+    function ilstString(key, val) {
+      const data = atom('data', u8a(0,0,0,1), u8a(0,0,0,0), te.encode(val));
+      return atom(key, data);
+    }
+    function ilstU8(key, val) {
+      const data = atom('data', u8a(0,0,0,21), u8a(0,0,0,0), u8a(val));
+      return atom(key, data);
+    }
+    // Cover image (atom 'covr')
+    //   flags: 0x0D (JPEG) ou 0x0E (PNG)
+    //   data: 4 bytes flags + 4 bytes reserved + image bytes raw
+    function ilstCover(imgBytes, mime) {
+      const isPng = (mime || '').toLowerCase().includes('png');
+      const typeFlag = isPng ? 0x0E : 0x0D;
+      const data = atom('data', u8a(0,0,0,typeFlag), u8a(0,0,0,0), imgBytes);
+      return atom('covr', data);
+    }
+
+    // Construction du ilst — covr ajouté en tête si on a une image
+    const ilstChildren = [];
+    if (coverBytes && coverBytes.length > 0) {
+      ilstChildren.push(ilstCover(coverBytes, coverMimeType));
+    }
+    ilstChildren.push(
+      ilstString('\xA9nam', title || 'Audiobook'),
+      ilstString('\xA9ART', author || 'Auteur inconnu'),
+      ilstString('\xA9alb', title || 'Audiobook'),
+      ilstString('\xA9gen', 'Audiobook'),
+      ilstU8('stik', 2)
+    );
+    const ilst = atom('ilst', ...ilstChildren);
+    const hdlr_meta = atom('hdlr', TS_BASE, u32(0), te.encode('mdir'), te.encode('appl'), u32(0), u32(0), u8a(0));
+    const meta = atom('meta', TS_BASE, hdlr_meta, ilst);
+
+    // ── chpl (Nero/iTunes chapter list) — format complémentaire pour Apple ──
+    //   Très simple : timestamps en unités de 100 nanosecondes (= 10000 × ms),
+    //   chaque titre en Pascal string UTF-8. Apple Books lit ce format en plus
+    //   ou à la place de la piste de chapitres texte.
+    const chplParts = [
+      u8a(1),              // version = 1
+      u8a(0, 0, 0),        // flags = 0
+      u32(0),              // reserved
+      u8a(chapters.length) // chapter count (max 255)
+    ];
+    for (const ch of chapters) {
+      const tBytes = te.encode((ch.title || 'Chapitre').slice(0, 255));
+      // Timestamp 64-bit big-endian en unités de 100ns (1 ms = 10 000 unités)
+      let v = BigInt(ch.startMs) * 10000n;
+      const tsBE = new Uint8Array(8);
+      for (let i = 7; i >= 0; i--) { tsBE[i] = Number(v & 0xFFn); v >>= 8n; }
+      chplParts.push(tsBE);
+      chplParts.push(u8a(tBytes.length));
+      chplParts.push(tBytes);
+    }
+    const chpl = atom('chpl', ...chplParts);
+    const udta = atom('udta', meta, chpl);
+
+    return atom('moov', mvhd, audio_trak, chap_trak, udta);
+  }
+
+  // ── Two-pass : 1) construit moov avec offsets placeholder pour calculer
+  //              sa taille,  2) reconstruit avec les vrais offsets.
+  const moovPlaceholder = buildMoov(0, new Array(chapters.length).fill(0));
+  const moovSize = moovPlaceholder.length;
+  const mdatHeaderSize = 8;
+  const mdatPayloadStart = ftyp.length + moovSize + mdatHeaderSize;
+  const audioStart = mdatPayloadStart;
+  const chapterOffsets = [];
+  let cursor = audioStart + audioTotalSize;
+  for (const cs of chapterSamples) {
+    chapterOffsets.push(cursor);
+    cursor += cs.length;
+  }
+  const moov = buildMoov(audioStart, chapterOffsets);
+  if (moov.length !== moovSize) throw new Error('Internal: moov size mismatch ' + moov.length + ' vs ' + moovSize);
+
+  // ── mdat ──────────────────────────────────────────────────────────────────
+  const mdatSize = mdatHeaderSize + audioTotalSize + chapterSamples.reduce((a,b)=>a+b.length, 0);
+  const mdatHeader = cat(u32(mdatSize), te.encode('mdat'));
+
+  // ── Sortie : parts pour le Blob (zéro grosse allocation supplémentaire) ──
+  // Chaque trame AAC est déjà un Uint8Array. On les passe au Blob constructor
+  // qui gère l'assemblage en interne sans concaténation préalable côté JS.
+  const audioParts = frames.map(f => f.data);
+  return [ftyp, moov, mdatHeader, ...audioParts, ...chapterSamples];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAV ENCODER (Float32Array PCM → WAV Blob)
+// ─────────────────────────────────────────────────────────────────────────────
+function buildWavHeader(numSamples, sampleRate) {
+  const dataLen = numSamples * 2;
+  const buf = new ArrayBuffer(44); const v = new DataView(buf);
+  const w = (o,s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4,36+dataLen,true); w(8,'WAVE'); w(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sampleRate,true); v.setUint32(28,sampleRate*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w(36,'data'); v.setUint32(40,dataLen,true);
+  return buf;
+}
+
+function float32ToInt16(floatData) {
+  const out = new Int16Array(floatData.length);
+  for (let i = 0; i < floatData.length; i++) {
+    const s = Math.max(-1, Math.min(1, floatData[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return out;
+}
+
+function pcmToWav(floatData, sampleRate) {
+  const numChannels = 1;
+  const bitDepth    = 16;
+  const samples     = new Int16Array(floatData.length);
+
+  for (let i = 0; i < floatData.length; i++) {
+    const s = Math.max(-1, Math.min(1, floatData[i]));
+    samples[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+
+  const dataLength   = samples.length * 2;
+  const bufferLength = 44 + dataLength;
+  const ab           = new ArrayBuffer(bufferLength);
+  const view         = new DataView(ab);
+
+  const writeStr = (offset, str) => { for (let i=0;i<str.length;i++) view.setUint8(offset+i, str.charCodeAt(i)); };
+
+  writeStr(0, 'RIFF');
+  view.setUint32(4,  36 + dataLength, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);  // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * bitDepth / 8, true);
+  view.setUint16(32, numChannels * bitDepth / 8, true);
+  view.setUint16(34, bitDepth, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  const dataView = new Int16Array(ab, 44);
+  dataView.set(samples);
+
+  return new Blob([ab], { type:'audio/wav' });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+function setPhase(idx, state) {
+  const el = document.getElementById(`ph${idx}`);
+  el.className = 'phase ' + state;
+  const icons = ['⟳','⟳','⟳','⟳'];
+  const done  = ['✓','✓','✓','✓'];
+  el.querySelector('.phase-icon').textContent =
+    state === 'done' ? done[idx] : state === 'error' ? '✕' : icons[idx];
+}
+
+function setPhaseDetail(idx, txt) { document.getElementById(`ph${idx}d`).textContent = txt; }
+function setPhaseBar(idx, pct)    { document.getElementById(`ph${idx}b`).style.width = pct + '%'; }
+
+function updateGlobal(ratio, label) {
+  const pct = Math.round(ratio * 100);
+  document.getElementById('progPct').textContent = pct + '%';
+  document.getElementById('progBar').style.width = pct + '%';
+  document.getElementById('progSub').textContent = label;
+}
+
+function log(msg, cls='') {
+  const el = document.createElement('div');
+  el.className = 'log-line ' + cls;
+  el.textContent = msg;
+  const logLines = document.getElementById('logLines');
+  logLines.appendChild(el);
+  logLines.parentElement.scrollTop = logLines.parentElement.scrollHeight;
+}
+
+function showResult(files, bookTitle, sentenceCount) {
+  document.getElementById('progressPanel').style.display = 'none';
+  const panel = document.getElementById('resultPanel');
+  panel.style.display = 'block'; panel.classList.add('fade-in');
+
+  const totalMin  = files.reduce((a,f) => a + f.durMin, 0);
+  const totalSize = files.reduce((a,f) => a + parseFloat(f.sizeMB), 0).toFixed(1);
+
+  const isSingle = files.length === 1;
+  const fmt = isSingle
+    ? `${(files[0].ext||'wav').toUpperCase()} · livre audio complet · chapitres intégrés`
+    : `${files.length} fichiers WAV numérotés`;
+
+  document.getElementById('resultDesc').innerHTML =
+    `<strong>${bookTitle}</strong><br>${sentenceCount.toLocaleString('fr')} blocs · ${totalMin} min · ${totalSize} Mo<br>
+    <span style="color:var(--ink-dim);font-size:11px">Voix ${selectedVoice} · ${isChirp3(selectedVoice)?'Google Chirp3-HD':'Google Neural2'} · ${fmt}</span>`;
+
+  const btns = document.getElementById('downloadBtns');
+  btns.innerHTML = '';
+  files.forEach((f, i) => {
+    const safe = (f.title || `chapitre-${i+1}`).replace(/[^a-zA-Z0-9\-_éèêàùûîôç ]/g,'');
+    const ext  = f.ext || 'wav';
+    const num  = String(i + 1).padStart(2, '0');
+    const a = document.createElement('a');
+    a.className = 'btn-dl btn-dl-primary';
+    a.href = f.url;
+    a.download = isSingle ? `${safe}.${ext}` : `${num} - ${safe}.${ext}`;
+    a.textContent = isSingle
+      ? `⬇ Télécharger ${ext.toUpperCase()} (${f.sizeMB} Mo)`
+      : `⬇ ${f.title} (${f.sizeMB} Mo)`;
+    btns.appendChild(a);
+  });
+
+  const restart = document.createElement('button');
+  restart.className = 'btn-dl btn-dl-secondary';
+  restart.textContent = '↩ Nouveau livre';
+  restart.onclick = restartApp;
+  btns.appendChild(restart);
+}
+
+function restartApp() {
+  location.reload();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ABORT
+// ─────────────────────────────────────────────────────────────────────────────
+function abortConversion() {
+  if (confirm('Annuler la conversion en cours ?')) { aborted = true; }
+}
+
+function onAbort() {
+  document.getElementById('abortBtn').style.display = 'none';
+  document.getElementById('actionRow').style.display = 'flex';
+  log('✕ Conversion annulée par l\'utilisateur','err');
+  updateGlobal(0, 'Annulé');
+  releaseWakeLock();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INJECT CHAPTERS (chpl atom iTunes → iOS Books navigation)
+// ─────────────────────────────────────────────────────────────────────────────
+function injectChapters(mp4Buffer, chapters) {
+  const enc = new TextEncoder();
+
+  function buildChpl() {
+    const entries = chapters.map(ch => ({ ts: Math.round(ch.timestamp * 10), tb: enc.encode(ch.title.slice(0,255)) }));
+    const dataSize = entries.reduce((a,e) => a + 9 + e.tb.length, 0);
+    const buf = new Uint8Array(12 + 4 + dataSize);
+    const v = new DataView(buf.buffer); let o = 0;
+    v.setUint32(o, buf.length, false); o += 4;
+    buf.set([0x63,0x68,0x70,0x6C], o); o += 4; // 'chpl'
+    o += 4; // version=0, flags=0
+    v.setUint32(o, entries.length, false); o += 4;
+    for (const e of entries) {
+      v.setUint32(o, Math.floor(e.ts/0x100000000), false); o += 4;
+      v.setUint32(o, e.ts>>>0, false); o += 4;
+      buf[o++] = e.tb.length;
+      buf.set(e.tb, o); o += e.tb.length;
+    }
+    return buf;
+  }
+
+  const src = new Uint8Array(mp4Buffer);
+  function u32(b,o) { return ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0; }
+  function setU32(b,o,n) { b[o]=(n>>24)&0xFF; b[o+1]=(n>>16)&0xFF; b[o+2]=(n>>8)&0xFF; b[o+3]=n&0xFF; }
+  function setStr(b,o,s) { for(let i=0;i<s.length;i++) b[o+i]=s.charCodeAt(i); }
+  function findBox(data,s,e,t) {
+    const c=[...t].map(x=>x.charCodeAt(0)); let i=s;
+    while(i+8<=e){const n=u32(data,i);if(n<8)break;if(data[i+4]===c[0]&&data[i+5]===c[1]&&data[i+6]===c[2]&&data[i+7]===c[3])return i;i+=n;}
+    return -1;
+  }
+
+  // ── Patch ftyp : isom → M4B  ──────────────────────────────────────────────
+  // ftyp layout : [size:4][type:4][major:4][version:4][compat…:4n]
+  // On écrit un nouveau ftyp 28 octets : M4B  + version 0 + M4A  + mp42 + isom
+  const newFtyp = new Uint8Array(28);
+  setU32(newFtyp, 0, 28);
+  setStr(newFtyp, 4,  'ftyp');
+  setStr(newFtyp, 8,  'M4B ');  // major brand
+  setU32(newFtyp, 12, 0);        // version
+  setStr(newFtyp, 16, 'M4B ');  // compat 1
+  setStr(newFtyp, 20, 'M4A ');  // compat 2
+  setStr(newFtyp, 24, 'isom');  // compat 3
+
+  // Taille de l'ancien ftyp
+  const oldFtypSize = findBox(src, 0, src.length, 'ftyp') !== -1 ? u32(src, 0) : 0;
+  const delta = newFtyp.length - oldFtypSize; // différence de taille (+4 si on passe de 24 à 28)
+
+  // ── Construire udta + chpl ────────────────────────────────────────────────
+  const chpl = buildChpl();
+  const moovOff = findBox(src, oldFtypSize, src.length, 'moov');
+  if (moovOff === -1) return mp4Buffer;
+  const moovSize = u32(src, moovOff);
+
+  const udta = new Uint8Array(8 + chpl.length);
+  setU32(udta, 0, udta.length);
+  setStr(udta, 4, 'udta');
+  udta.set(chpl, 8);
+
+  // ── Assemblage final : nouveau ftyp + reste avec moov agrandi ─────────────
+  const insertAt = moovOff + moovSize;
+  const out = new Uint8Array(newFtyp.length + (src.length - oldFtypSize) + udta.length);
+  let pos = 0;
+  out.set(newFtyp, pos); pos += newFtyp.length;
+  out.set(src.subarray(oldFtypSize, insertAt), pos);
+  const moovPosInOut = newFtyp.length + (moovOff - oldFtypSize);
+  pos += (insertAt - oldFtypSize);
+  out.set(udta, pos); pos += udta.length;
+  out.set(src.subarray(insertAt), pos);
+  setU32(out, moovPosInOut, moovSize + udta.length);
+  return out.buffer;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UTILS
+// ─────────────────────────────────────────────────────────────────────────────
+function escapeXml(s) {
+  return s
+    // Caractères de contrôle invalides en XML (gardent uniquement \t \n \r dans
+    // la plage 0-0x1F + retirer 0x7F-0x9F + U+FFFE/U+FFFF)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F￾￿]/g, '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
