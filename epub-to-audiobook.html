@@ -637,6 +637,21 @@ header {
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
+// TARIFICATION GOOGLE TTS (déclarée en TÊTE car utilisée par le bandeau de
+// conso qui s'initialise dès le boot, AVANT que le reste du fichier exécute).
+// const en TDZ provoque ReferenceError si on accède avant la ligne de déclaration.
+// ─────────────────────────────────────────────────────────────────────────────
+function getVoiceTier(voice) {
+  if (voice.includes('Chirp3-HD'))   return { tier: 'Chirp3-HD', usdPerM: 30,  freeM: 1   };
+  if (voice.includes('Studio'))      return { tier: 'Studio',    usdPerM: 160, freeM: 0.1 };
+  if (voice.includes('Neural2'))     return { tier: 'Neural2',   usdPerM: 16,  freeM: 1   };
+  if (voice.includes('Wavenet'))     return { tier: 'WaveNet',   usdPerM: 16,  freeM: 1   };
+  if (voice.includes('Polyglot'))    return { tier: 'Polyglot',  usdPerM: 16,  freeM: 1   };
+  return                                    { tier: 'Standard',  usdPerM: 4,   freeM: 4   };
+}
+const USD_TO_EUR = 0.93;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AUTH — hash SHA-256 codé en dur dans la source (seul le propriétaire du
 //        fichier peut modifier le mot de passe)
 //
@@ -1266,6 +1281,7 @@ function getMonthlyTotalSpending() {
 }
 // Bandeau persistant en haut de page (visible avant même de charger un ePub)
 function refreshGlobalQuotaBanner() {
+  try {
   const monthEl  = document.getElementById('gqbMonth');
   const totalEl  = document.getElementById('gqbTotal');
   const barEl    = document.getElementById('gqbBar');
@@ -1293,6 +1309,7 @@ function refreshGlobalQuotaBanner() {
     `${l.tier} ${l.used.toLocaleString('fr')}${l.eur > 0 ? ` (+${l.eur.toFixed(2)} €)` : ''}`
   ).join(' · ');
   detailEl.innerHTML = tierLine + (otherTiers ? `<br>Autres tiers ce mois : ${otherTiers}` : '');
+  } catch (e) { console.error('[refreshGlobalQuotaBanner]', e); }
 }
 
 function refreshQuotaPanel() {
@@ -2641,18 +2658,8 @@ function sanitizeSSMLForChirp3(ssml) {
 }
 
 function isChirp3(voice) { return voice.includes('Chirp3-HD'); }
-
-// ─── Tarification Google Cloud TTS (USD/M caractères + quota gratuit/mois) ─
-// Source : https://cloud.google.com/text-to-speech/pricing
-function getVoiceTier(voice) {
-  if (voice.includes('Chirp3-HD'))   return { tier: 'Chirp3-HD', usdPerM: 30,  freeM: 1   };
-  if (voice.includes('Studio'))      return { tier: 'Studio',    usdPerM: 160, freeM: 0.1 };
-  if (voice.includes('Neural2'))     return { tier: 'Neural2',   usdPerM: 16,  freeM: 1   };
-  if (voice.includes('Wavenet'))     return { tier: 'WaveNet',   usdPerM: 16,  freeM: 1   };
-  if (voice.includes('Polyglot'))    return { tier: 'Polyglot',  usdPerM: 16,  freeM: 1   };
-  return                                    { tier: 'Standard',  usdPerM: 4,   freeM: 4   };
-}
-const USD_TO_EUR = 0.93;
+// Note : getVoiceTier() et USD_TO_EUR sont définis plus haut (avant le boot)
+// car le bandeau de conso s'initialise dès le chargement de la page.
 
 // Compteur global pour limiter le nombre de logs SSML (sinon spam console)
 let __ssmlDebugCount = 0;
