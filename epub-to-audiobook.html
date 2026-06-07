@@ -145,6 +145,7 @@ header {
   padding:10px 12px;
   background:var(--lift); border:1px solid var(--border);
   border-radius:8px; cursor:pointer; transition:all 0.18s;
+  position:relative;
 }
 
 .voice-card:hover { border-color:var(--border-hi); }
@@ -152,6 +153,17 @@ header {
 
 .vc-name { font-size:13px; color:#fff; margin-bottom:2px; }
 .vc-meta { font-size:11px; color:var(--ink-dim); }
+
+.vc-test-btn {
+  position:absolute; top:8px; right:8px;
+  background:rgba(255,255,255,0.06); border:1px solid var(--border);
+  color:var(--ink); padding:4px 8px; border-radius:6px;
+  font-size:11px; cursor:pointer; transition:all 0.15s;
+  z-index:2;
+}
+.vc-test-btn:hover  { background:rgba(192,132,252,0.15); border-color:var(--accent); }
+.vc-test-btn:disabled { opacity:0.5; cursor:wait; }
+.vc-test-btn.playing { background:rgba(134,239,172,0.2); border-color:var(--green); color:var(--green); }
 
 .tag {
   display:inline-block; font-size:9px; letter-spacing:0.08em;
@@ -876,7 +888,16 @@ function buildVoiceGrid() {
                     : v.type === 'std' ? 'Standard'
                     : v.type === 'c3hd' ? 'Chirp3-HD' : v.type;
     const lockIcon = locked ? ' 🔒' : (premium ? ' 💎' : '');
-    d.innerHTML = `<div class="vc-name">${v.label}${lockIcon} <span class="tag ${v.type}">${tierLabel}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
+    d.innerHTML = `
+      <button class="vc-test-btn" data-voice="${v.name}" title="Écouter un extrait avec cette voix">🔊 Tester</button>
+      <div class="vc-name">${v.label}${lockIcon} <span class="tag ${v.type}">${tierLabel}</span></div>
+      <div class="vc-meta">${v.gen} · ${v.desc}</div>`;
+    // Bouton tester : capture le clic AVANT que le parent ne sélectionne
+    const testBtn = d.querySelector('.vc-test-btn');
+    testBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      testVoice(v, testBtn);
+    };
     d.onclick = () => {
       if (locked) {
         if (confirm('Cette voix est facturée par Google (~24 €/M caractères pour Chirp3-HD).\n\nTon quota gratuit est épuisé jusqu\'au 1er juillet.\n\nDéverrouiller les voix premium ?')) {
@@ -894,6 +915,78 @@ function buildVoiceGrid() {
     };
     grid.appendChild(d);
   });
+}
+
+// ─── Test audio d'une voix (preview court, mis en cache) ──────────────────
+// Texte court (~140 chars) → quasi-gratuit même en Chirp3-HD (~0.4 centime).
+// Servi par le cache IndexedDB existant : 2e clic = totalement gratuit.
+const VOICE_TEST_SAMPLE = `Bonjour, je serai votre narrateur pour ce livre audio. Voici un extrait pour que vous puissiez juger ma voix avant de commencer.`;
+let __currentVoiceAudio = null;
+
+async function testVoice(voice, btnEl) {
+  // Stoppe une lecture en cours si on clique sur un autre bouton
+  if (__currentVoiceAudio) {
+    __currentVoiceAudio.pause();
+    document.querySelectorAll('.vc-test-btn.playing').forEach(b => {
+      b.classList.remove('playing');
+      b.textContent = '🔊 Tester';
+    });
+    __currentVoiceAudio = null;
+  }
+  if (!gcpApiKey) {
+    alert('Saisis ta clé Google Cloud d\'abord.');
+    return;
+  }
+  const originalText = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.textContent = '⏳ Génération…';
+  try {
+    // Bascule temporaire de selectedVoice le temps de l'appel (googleTTS l'utilise)
+    const savedVoice = selectedVoice;
+    selectedVoice = voice.name;
+    const chirp3 = isChirp3(voice.name);
+    const sampleText = `Bonjour, je m'appelle ${voice.label}. ${VOICE_TEST_SAMPLE}`;
+    const ssml = chirp3
+      ? `<speak>${sampleText}</speak>`
+      : `<speak><prosody rate="1.0">${sampleText}</prosody></speak>`;
+    const audioBuffer = await googleTTS(ssml, 3);
+    selectedVoice = savedVoice;
+
+    // Décodage WAV (LINEAR16 44.1kHz) → blob playable
+    const blob = new Blob([audioBuffer], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    __currentVoiceAudio = audio;
+    btnEl.textContent = '⏸ En lecture';
+    btnEl.classList.add('playing');
+    audio.onended = () => {
+      btnEl.textContent = originalText;
+      btnEl.classList.remove('playing');
+      btnEl.disabled = false;
+      URL.revokeObjectURL(url);
+      if (__currentVoiceAudio === audio) __currentVoiceAudio = null;
+    };
+    audio.onerror = () => {
+      btnEl.textContent = '✗ Erreur';
+      btnEl.classList.remove('playing');
+      setTimeout(() => { btnEl.textContent = originalText; btnEl.disabled = false; }, 2000);
+    };
+    await audio.play();
+    btnEl.disabled = false;  // permet de re-cliquer pour stopper
+    btnEl.onclick = (ev) => {
+      ev.stopPropagation();
+      audio.pause();
+      audio.onended();
+    };
+    // Rafraîchit les panneaux quota/cache (si nouveau cache miss → compteur +)
+    refreshGlobalQuotaBanner();
+    refreshCachePanel?.();
+  } catch (e) {
+    console.error('[testVoice]', e);
+    btnEl.textContent = '✗ ' + (e.message || 'Erreur');
+    btnEl.classList.remove('playing');
+    setTimeout(() => { btnEl.textContent = originalText; btnEl.disabled = false; }, 3000);
+  }
 }
 
 function togglePremiumUnlock() {
