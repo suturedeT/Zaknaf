@@ -469,6 +469,20 @@ header {
     <div class="tagline">Convertisseur ePub → Livre audio · Google Neural2 + SSML IA</div>
   </header>
 
+  <!-- BANDEAU GLOBAL CONSO GOOGLE TTS — visible en permanence -->
+  <div id="globalQuotaBanner" style="margin:0 auto 16px;max-width:900px;padding:12px 16px;background:var(--lift);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--ink-dim);line-height:1.5">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <strong style="color:var(--ink);font-size:13px">📊 Conso Google TTS</strong>
+      <span id="gqbMonth" style="opacity:.7">mois courant</span>
+      <span style="flex:1"></span>
+      <span id="gqbTotal" style="font-weight:600">— € dépensés ce mois</span>
+    </div>
+    <div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden">
+      <div id="gqbBar" style="height:100%;width:0%;background:#86efac;transition:width 0.3s,background 0.3s"></div>
+    </div>
+    <div id="gqbDetail" style="margin-top:6px;font-size:11px;opacity:.85"></div>
+  </div>
+
   <!-- Step 1: API Keys -->
   <div class="card" id="keysCard">
     <div class="card-title">Clés API</div>
@@ -808,6 +822,7 @@ document.getElementById('gcpKey').value    = gcpApiKey;
 document.getElementById('claudeKey').value = claudeApiKey;
 seedQuotaIfNeeded();
 buildVoiceGrid();
+refreshGlobalQuotaBanner();
 if (gcpApiKey && claudeApiKey) showStep2();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1249,7 +1264,39 @@ function getMonthlyTotalSpending() {
   }
   return { totalEur, totalChars, lines };
 }
+// Bandeau persistant en haut de page (visible avant même de charger un ePub)
+function refreshGlobalQuotaBanner() {
+  const monthEl  = document.getElementById('gqbMonth');
+  const totalEl  = document.getElementById('gqbTotal');
+  const barEl    = document.getElementById('gqbBar');
+  const detailEl = document.getElementById('gqbDetail');
+  if (!monthEl) return;
+  const month = currentMonthKey();
+  monthEl.textContent = month;
+  const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
+  const used = getMonthlyChars(tier);
+  const free = freeM * 1_000_000;
+  const pct = Math.min(100, (used / free) * 100);
+  let color = '#86efac';
+  if (pct >= 100) color = '#fca5a5';
+  else if (pct >= 80) color = '#fdba74';
+  else if (pct >= 50) color = '#fde047';
+  barEl.style.width = `${pct}%`;
+  barEl.style.background = color;
+  const total = getMonthlyTotalSpending();
+  totalEl.innerHTML = total.totalEur > 0
+    ? `💸 <strong style="color:#fca5a5">${total.totalEur.toFixed(2)} €</strong> dépensés ce mois`
+    : `<strong style="color:#86efac">0 €</strong> dépensé ce mois`;
+  const overChars = Math.max(0, used - free);
+  const tierLine = `Voix active <strong style="color:var(--ink)">${tier}</strong> · <strong>${used.toLocaleString('fr')}</strong>/${free.toLocaleString('fr')} car (<span style="color:${color}">${pct.toFixed(1)}%</span>)${overChars > 0 ? ` · <span style="color:#fca5a5">+${overChars.toLocaleString('fr')} hors quota</span>` : ''}`;
+  const otherTiers = total.lines.filter(l => l.tier !== tier).map(l =>
+    `${l.tier} ${l.used.toLocaleString('fr')}${l.eur > 0 ? ` (+${l.eur.toFixed(2)} €)` : ''}`
+  ).join(' · ');
+  detailEl.innerHTML = tierLine + (otherTiers ? `<br>Autres tiers ce mois : ${otherTiers}` : '');
+}
+
 function refreshQuotaPanel() {
+  refreshGlobalQuotaBanner();
   const el = document.getElementById('quotaPanelContent');
   if (!el) return;
   const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
@@ -2766,6 +2813,7 @@ async function googleTTS(ssml, retries = 12) {
       await ttsCachePut(cacheHash, bytes.buffer, inputSSML.length, selectedVoice);
       // ─── COMPTEUR MENSUEL : appel Google effectif → on facture ───
       addMonthlyChars(getVoiceTier(selectedVoice).tier, inputSSML.length);
+      try { refreshGlobalQuotaBanner(); } catch(_) {}
       return bytes.buffer;
     } catch(e) {
       if (aborted) throw new Error('Aborted');
