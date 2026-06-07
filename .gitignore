@@ -9,3 +9,6 @@ __pycache__/
 
 # Tous les WAV de test à la racine
 test_*.wav
+
+# XTTS voices upload directory
+voices/

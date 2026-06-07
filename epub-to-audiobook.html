@@ -176,6 +176,7 @@ header {
 .tag.std   { background:rgba(125,211,252,0.15); color:#7dd3fc; }
 .tag.c3hd  { background:rgba(252,165,165,0.15); color:#fca5a5; }
 .tag.piper { background:rgba(251,191,36,0.18);  color:#fbbf24; }
+.tag.xtts  { background:rgba(168,85,247,0.18);  color:#a855f7; }
 
 /* drop zone */
 #dropzone {
@@ -778,15 +779,37 @@ const VOICES = [
 ];
 
 // Helpers backend
-function getVoiceObj(name) { return VOICES.find(v => v.name === name); }
+function getVoiceObj(name) {
+  if (!name) return null;
+  // Cherche d'abord dans VOICES statique
+  let v = VOICES.find(x => x.name === name);
+  if (v) return v;
+  // Puis dans les voix XTTS dynamiques
+  if (name.startsWith('xtts:')) {
+    const vname = name.slice(5);
+    const xv = __xttsVoices.find(x => x.name === vname);
+    if (xv) return { name, label: xv.name, backend: 'xtts', xttsVoice: xv.name, gen: '—', type: 'xtts', desc: 'Voice cloning' };
+  }
+  return null;
+}
 function isPiperVoice(name) {
   if (!name) return false;
   if (name.startsWith('piper:')) return true;
   const v = getVoiceObj(name);
   return v && v.backend === 'piper';
 }
+function isXttsVoice(name) {
+  return !!(name && name.startsWith('xtts:'));
+}
+// "Local backend" = pas Google = gratuit (Piper ou XTTS)
+function isLocalBackend(name) {
+  return isPiperVoice(name) || isXttsVoice(name);
+}
 const PIPER_SERVER_URL = 'http://127.0.0.1:5005';
+const XTTS_SERVER_URL  = 'http://127.0.0.1:5006';
 let __piperAvailable = null;  // null = inconnu, true/false = testé
+let __xttsAvailable  = null;
+let __xttsVoices     = [];    // liste dynamique des voix clonées
 
 // Paramètres prosodie Piper — persistants localStorage
 function getPiperParams() {
@@ -882,7 +905,11 @@ buildVoiceGrid();
 refreshGlobalQuotaBanner();
 piperHealthCheck().then(ok => {
   console.log('[Piper] disponible =', ok);
-  buildVoiceGrid();  // refresh pour afficher l'état serveur
+  buildVoiceGrid();
+});
+xttsHealthCheck().then(ok => {
+  console.log('[XTTS] disponible =', ok, '· voix=', __xttsVoices.length);
+  buildVoiceGrid();
 });
 if (gcpApiKey && claudeApiKey) showStep2();
 
@@ -952,6 +979,54 @@ function buildVoiceGrid() {
     </div>
   `;
   grid.appendChild(piperBanner);
+
+  // ── Bandeau état serveur XTTS + voix clonées dynamiques ──────────────
+  const xttsBanner = document.createElement('div');
+  xttsBanner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:rgba(168,85,247,0.06);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);margin-bottom:8px';
+  const xttsStatus = __xttsAvailable === null ? '⏳ détection…'
+                   : __xttsAvailable ? '✅ <strong style="color:var(--green)">serveur en ligne</strong> (localhost:5006) · ' + __xttsVoices.length + ' voix clonée(s)'
+                                     : '⚠ <strong style="color:#fbbf24">serveur hors-ligne</strong> · double-clique <code style="background:rgba(255,255,255,0.08);padding:2px 5px;border-radius:3px">start_xtts.bat</code>';
+  const xttsButtons = `
+    <button onclick="reconnectXttsServer(this)" style="background:transparent;border:1px solid var(--border);color:var(--ink);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">🔄 Reconnecter</button>
+    ${__xttsAvailable ? `
+      <button onclick="document.getElementById('xttsUploadInput').click()" style="background:transparent;border:1px solid var(--border);color:var(--ink);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">📤 Cloner une voix</button>
+      <input type="file" id="xttsUploadInput" accept="audio/*" style="display:none" onchange="uploadXttsVoice(this)">
+      <button onclick="shutdownXttsServer(this)" style="background:transparent;border:1px solid var(--border);color:#fca5a5;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">⏹ Arrêter</button>
+    ` : ''}
+  `;
+  xttsBanner.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="flex:1">💜 <strong style="color:var(--ink)">XTTS-v2 (voice cloning, 0 €)</strong> · ${xttsStatus}</span>
+      ${xttsButtons}
+    </div>
+    <div style="margin-top:6px;font-size:10px;opacity:.7">Clone une voix à partir de 6-30 s d'audio. Glisse un fichier .wav/.mp3 ou utilise le bouton.</div>
+  `;
+  grid.appendChild(xttsBanner);
+
+  // ── Cartes de voix XTTS dynamiques ──────────────────────────────────
+  if (__xttsAvailable && __xttsVoices.length > 0) {
+    __xttsVoices.forEach(xv => {
+      const voiceName = `xtts:${xv.name}`;
+      const d = document.createElement('div');
+      d.className = 'voice-card' + (voiceName === selectedVoice ? ' sel' : '');
+      d.innerHTML = `
+        <button class="vc-test-btn" title="Écouter un extrait avec cette voix">🔊 Tester</button>
+        <button onclick="event.stopPropagation(); deleteXttsVoice('${xv.name}')" style="position:absolute;top:8px;right:80px;background:transparent;border:1px solid var(--border);color:#fca5a5;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:10px" title="Supprimer cette voix">🗑</button>
+        <div class="vc-name">${xv.name} 💜 <span class="tag xtts">XTTS-v2</span></div>
+        <div class="vc-meta">Cloné · ${xv.size_mb} Mo · ${xv.file}</div>`;
+      const tb = d.querySelector('.vc-test-btn');
+      tb.onclick = (ev) => { ev.stopPropagation(); testVoice({ name: voiceName, label: xv.name }, tb); };
+      d.onclick = () => {
+        selectedVoice = voiceName;
+        localStorage.setItem('epubson_voice', voiceName);
+        buildVoiceGrid();
+        updateCostEstimate();
+        refreshCachePanel();
+        refreshQuotaPanel();
+      };
+      grid.appendChild(d);
+    });
+  }
 
   VOICES.forEach(v => {
     const d = document.createElement('div');
@@ -1312,13 +1387,14 @@ function updateCostEstimate() {
     el.innerHTML = `Sélectionne au moins un chapitre pour voir l'estimation…`;
     return;
   }
-  // Backend Piper = gratuit, on saute le calcul Google
-  if (isPiperVoice(selectedVoice)) {
+  // Backend local (Piper ou XTTS) = gratuit, on saute le calcul Google
+  if (isLocalBackend(selectedVoice)) {
+    const label = isXttsVoice(selectedVoice) ? '💜 Backend XTTS-v2 (voice cloning)' : '🟡 Backend Piper local';
     el.innerHTML = `
-      <strong style="color:var(--ink)">🟡 Backend Piper local</strong> &nbsp;·&nbsp;
+      <strong style="color:var(--ink)">${label}</strong> &nbsp;·&nbsp;
       ${totalChapters} chapitre${totalChapters>1?'s':''} · <strong>${totalChars.toLocaleString('fr')}</strong> caractères<br>
       Coût : <strong style="color:var(--green)">0,00 €</strong> (génération 100% locale, aucun appel API)<br>
-      <span style="font-size:10px;opacity:.7">⚠ Le serveur python piper_server.py doit tourner en parallèle.</span>
+      <span style="font-size:10px;opacity:.7">⚠ Le serveur python local doit tourner en parallèle.</span>
     `;
     return;
   }
@@ -1484,13 +1560,17 @@ function refreshGlobalQuotaBanner() {
   if (!monthEl) return;
   const month = currentMonthKey();
   monthEl.textContent = month;
-  // Si voix actuelle est Piper → bandeau allégé (rien de facturé en local)
-  if (isPiperVoice(selectedVoice)) {
+  // Si voix actuelle est locale (Piper/XTTS) → bandeau allégé
+  if (isLocalBackend(selectedVoice)) {
+    const xtts = isXttsVoice(selectedVoice);
     const total = getMonthlyTotalSpending();
-    totalEl.innerHTML = `🟡 <strong style="color:#fbbf24">Backend Piper local actif · 0 € facturable</strong>`;
+    const tag = xtts ? '💜' : '🟡';
+    const color = xtts ? '#a855f7' : '#fbbf24';
+    const label = xtts ? 'XTTS-v2 (voice cloning)' : 'Piper local';
+    totalEl.innerHTML = `${tag} <strong style="color:${color}">Backend ${label} actif · 0 € facturable</strong>`;
     barEl.style.width = '0%';
-    barEl.style.background = '#fbbf24';
-    detailEl.innerHTML = `Voix active <strong style="color:var(--ink)">Piper local</strong>${total.totalEur > 0 ? ` · Conso Google déjà engagée ce mois : <strong style="color:#fca5a5">${total.totalEur.toFixed(2)} €</strong>` : ''}`;
+    barEl.style.background = color;
+    detailEl.innerHTML = `Voix active <strong style="color:var(--ink)">${label}</strong>${total.totalEur > 0 ? ` · Conso Google déjà engagée ce mois : <strong style="color:#fca5a5">${total.totalEur.toFixed(2)} €</strong>` : ''}`;
     return;
   }
   const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
@@ -1961,8 +2041,8 @@ async function startConversion() {
     return;
   }
 
-  // ─── Vérif quota gratuit Google avant de lancer (skip si Piper) ───
-  if (!isPiperVoice(selectedVoice)) {
+  // ─── Vérif quota gratuit Google avant de lancer (skip si backend local) ─
+  if (!isLocalBackend(selectedVoice)) {
     const totalChars = booksToProcess.reduce((a, b) =>
       a + b.selectedChapters.reduce((s, ch) => s + ch.text.length, 0), 0);
     const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
@@ -3033,6 +3113,72 @@ function applyPiperPreset(name) {
   buildVoiceGrid();  // refresh UI sliders
 }
 
+// ─── XTTS UI helpers ────────────────────────────────────────────────
+async function reconnectXttsServer(btn) {
+  const old = btn.textContent;
+  btn.textContent = '⏳ Test…'; btn.disabled = true;
+  __xttsAvailable = null;
+  const ok = await xttsHealthCheck();
+  btn.textContent = ok ? '✅ Connecté' : '✗ Hors-ligne';
+  buildVoiceGrid();
+  setTimeout(() => {
+    if (document.body.contains(btn)) { btn.textContent = old; btn.disabled = false; }
+  }, 1500);
+}
+
+async function shutdownXttsServer(btn) {
+  if (!confirm("Arrêter le serveur XTTS-v2 ?\n\nTu devras le relancer (double-clic start_xtts.bat).")) return;
+  btn.textContent = '⏳…'; btn.disabled = true;
+  try { await fetch(`${XTTS_SERVER_URL}/shutdown`, { method:'POST' }); } catch(_) {}
+  await new Promise(r => setTimeout(r, 1000));
+  __xttsAvailable = null;
+  await xttsHealthCheck();
+  buildVoiceGrid();
+}
+
+async function uploadXttsVoice(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const defaultName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const name = prompt(`Nom de la voix clonée (alphanum + _ - uniquement) :`, defaultName);
+  if (!name) { input.value = ''; return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('name', name);
+  try {
+    const r = await fetch(`${XTTS_SERVER_URL}/upload_voice`, { method:'POST', body: fd });
+    if (!r.ok) {
+      const err = await r.json();
+      alert('Erreur upload : ' + (err.error || r.status));
+    } else {
+      alert(`✓ Voix "${name}" uploadée. Disponible dans la grille.`);
+      await xttsListVoices();
+      buildVoiceGrid();
+    }
+  } catch (e) {
+    alert('Erreur réseau : ' + e.message);
+  }
+  input.value = '';
+}
+
+async function deleteXttsVoice(name) {
+  if (!confirm(`Supprimer la voix "${name}" ?`)) return;
+  try {
+    await fetch(`${XTTS_SERVER_URL}/delete_voice`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name }),
+    });
+    await xttsListVoices();
+    // Si on était sur cette voix, repli vers Standard
+    if (selectedVoice === `xtts:${name}`) {
+      selectedVoice = 'fr-FR-Standard-C';
+      localStorage.setItem('epubson_voice', selectedVoice);
+    }
+    buildVoiceGrid();
+  } catch (e) { alert('Erreur : ' + e.message); }
+}
+
 // Reconnect button : force un re-check (utile après lancement manuel du serveur)
 async function reconnectPiperServer(btn) {
   const old = btn.textContent;
@@ -3064,6 +3210,78 @@ async function shutdownPiperServer(btn) {
   __piperAvailable = null;
   await piperHealthCheck();
   buildVoiceGrid();
+}
+
+// ─── XTTS-v2 (serveur local) ──────────────────────────────────────────
+async function xttsHealthCheck() {
+  if (__xttsAvailable !== null) return __xttsAvailable;
+  try {
+    const r = await fetch(`${XTTS_SERVER_URL}/health`, { method:'GET' });
+    if (r.ok) {
+      const data = await r.json();
+      __xttsAvailable = true;
+      __xttsVoices = data.voices || [];
+      console.log(`[XTTS] serveur OK · device=${data.device} · ${__xttsVoices.length} voix`);
+    } else {
+      __xttsAvailable = false;
+    }
+  } catch (_) {
+    __xttsAvailable = false;
+  }
+  return __xttsAvailable;
+}
+
+async function xttsListVoices() {
+  try {
+    const r = await fetch(`${XTTS_SERVER_URL}/voices`);
+    if (r.ok) {
+      const data = await r.json();
+      __xttsVoices = data.voices || [];
+    }
+  } catch (_) {}
+  return __xttsVoices;
+}
+
+async function xttsTTS(ssml, retries = 3) {
+  const v = getVoiceObj(selectedVoice);
+  if (!v || v.backend !== 'xtts') throw new Error('Voix non XTTS');
+  const text = stripSSMLForPiper(ssml);  // même stripping qu'avec Piper
+  if (!text) throw new Error('Texte vide après strip SSML');
+
+  const cacheHash = await ttsCacheKey(text, selectedVoice, { backend:'xtts' });
+  const cached = await ttsCacheGet(cacheHash);
+  if (cached && cached.audio) {
+    __ttsCacheStats.hits++;
+    __ttsCacheStats.savedChars += cached.chars || text.length;
+    return cached.audio;
+  }
+  __ttsCacheStats.misses++;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const r = await fetch(`${XTTS_SERVER_URL}/tts`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ text, voice: v.xttsVoice, language: 'fr' }),
+      });
+      if (!r.ok) {
+        const err = await r.text();
+        throw new Error(`XTTS ${r.status} : ${err}`);
+      }
+      const audioBuffer = await r.arrayBuffer();
+      await ttsCachePut(cacheHash, audioBuffer, text.length, selectedVoice);
+      return audioBuffer;
+    } catch (e) {
+      if (aborted) throw new Error('Aborted');
+      if (attempt === retries - 1) {
+        if (e.message?.includes('Failed to fetch')) {
+          throw new Error("Serveur XTTS inaccessible. Lance start_xtts.bat dans un terminal.");
+        }
+        throw e;
+      }
+      await sleep(1000 * (attempt + 1));
+    }
+  }
 }
 
 async function piperHealthCheck() {
@@ -3133,8 +3351,11 @@ async function piperTTS(ssml, retries = 3) {
   }
 }
 
-// Dispatcher principal — choisit Google ou Piper selon la voix sélectionnée
+// Dispatcher principal — Google / Piper / XTTS selon la voix sélectionnée
 async function synthesize(ssml, retries) {
+  if (isXttsVoice(selectedVoice)) {
+    return await xttsTTS(ssml, Math.min(retries || 3, 3));
+  }
   if (isPiperVoice(selectedVoice)) {
     return await piperTTS(ssml, Math.min(retries || 3, 3));
   }
