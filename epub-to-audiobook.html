@@ -171,10 +171,11 @@ header {
   margin-left:5px; vertical-align:middle;
 }
 
-.tag.n2   { background:rgba(192,132,252,0.2); color:var(--accent); }
-.tag.wn   { background:rgba(134,239,172,0.15); color:var(--green); }
-.tag.std  { background:rgba(125,211,252,0.15); color:#7dd3fc; }
-.tag.c3hd { background:rgba(252,165,165,0.15); color:#fca5a5; }
+.tag.n2    { background:rgba(192,132,252,0.2); color:var(--accent); }
+.tag.wn    { background:rgba(134,239,172,0.15); color:var(--green); }
+.tag.std   { background:rgba(125,211,252,0.15); color:#7dd3fc; }
+.tag.c3hd  { background:rgba(252,165,165,0.15); color:#fca5a5; }
+.tag.piper { background:rgba(251,191,36,0.18);  color:#fbbf24; }
 
 /* drop zone */
 #dropzone {
@@ -769,7 +770,23 @@ const VOICES = [
   { name:'fr-FR-Chirp3-HD-Charon',       label:'Charon',   gen:'Homme', type:'c3hd', desc:'Chirp3 · grave & posé' },
   { name:'fr-FR-Chirp3-HD-Fenrir',       label:'Fenrir',   gen:'Homme', type:'c3hd', desc:'Chirp3 · expressif' },
   { name:'fr-FR-Chirp3-HD-Puck',         label:'Puck',     gen:'Homme', type:'c3hd', desc:'Chirp3 · dynamique' },
+  // ── Piper (local, gratuit) — nécessite piper_server.py lancé ─────────────
+  { name:'piper:fr_FR-upmc-medium:0',   label:'Jessica (Piper)',  gen:'Femme', type:'piper', desc:'Piper · UPMC · 100% local & gratuit',
+    backend:'piper', pipModel:'fr_FR-upmc-medium', pipSpeakerId:0 },
+  { name:'piper:fr_FR-mls-medium:0',    label:'MLS-1840 (Piper)', gen:'Femme', type:'piper', desc:'Piper · MLS · 100% local & gratuit',
+    backend:'piper', pipModel:'fr_FR-mls-medium',  pipSpeakerId:0 },
 ];
+
+// Helpers backend
+function getVoiceObj(name) { return VOICES.find(v => v.name === name); }
+function isPiperVoice(name) {
+  if (!name) return false;
+  if (name.startsWith('piper:')) return true;
+  const v = getVoiceObj(name);
+  return v && v.backend === 'piper';
+}
+const PIPER_SERVER_URL = 'http://127.0.0.1:5005';
+let __piperAvailable = null;  // null = inconnu, true/false = testé
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE
@@ -850,6 +867,10 @@ document.getElementById('claudeKey').value = claudeApiKey;
 seedQuotaIfNeeded();
 buildVoiceGrid();
 refreshGlobalQuotaBanner();
+piperHealthCheck().then(ok => {
+  console.log('[Piper] disponible =', ok);
+  buildVoiceGrid();  // refresh pour afficher l'état serveur
+});
 if (gcpApiKey && claudeApiKey) showStep2();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -874,10 +895,21 @@ function buildVoiceGrid() {
   `;
   grid.appendChild(banner);
 
+  // Bandeau état serveur Piper
+  const piperBanner = document.createElement('div');
+  piperBanner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:rgba(251,191,36,0.06);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);margin-bottom:8px';
+  const piperStatus = __piperAvailable === null ? '⏳ détection…'
+                    : __piperAvailable ? '✅ serveur Piper en ligne (localhost:5005)'
+                                       : '⚠ serveur Piper hors-ligne · lance <code style="background:rgba(255,255,255,0.08);padding:2px 5px;border-radius:3px">python piper_server.py</code>';
+  piperBanner.innerHTML = `🟡 <strong style="color:var(--ink)">Voix Piper (100% local, 0 €)</strong> · ${piperStatus}`;
+  grid.appendChild(piperBanner);
+
   VOICES.forEach(v => {
     const d = document.createElement('div');
     const premium = isPremiumVoice(v.name);
-    const locked = premium && !unlocked;
+    const piper = v.backend === 'piper';
+    const piperUnavailable = piper && __piperAvailable === false;
+    const locked = (premium && !unlocked) || piperUnavailable;
     d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
     if (locked) {
       d.style.opacity = '0.35';
@@ -886,8 +918,9 @@ function buildVoiceGrid() {
     const tierLabel = v.type === 'n2' ? 'Neural2'
                     : v.type === 'wn' ? 'WaveNet'
                     : v.type === 'std' ? 'Standard'
-                    : v.type === 'c3hd' ? 'Chirp3-HD' : v.type;
-    const lockIcon = locked ? ' 🔒' : (premium ? ' 💎' : '');
+                    : v.type === 'c3hd' ? 'Chirp3-HD'
+                    : v.type === 'piper' ? 'Piper local' : v.type;
+    const lockIcon = piper ? ' 🏠' : (locked ? ' 🔒' : (premium ? ' 💎' : ''));
     d.innerHTML = `
       <button class="vc-test-btn" data-voice="${v.name}" title="Écouter un extrait avec cette voix">🔊 Tester</button>
       <div class="vc-name">${v.label}${lockIcon} <span class="tag ${v.type}">${tierLabel}</span></div>
@@ -898,7 +931,17 @@ function buildVoiceGrid() {
       ev.stopPropagation();
       testVoice(v, testBtn);
     };
-    d.onclick = () => {
+    d.onclick = async () => {
+      if (piperUnavailable) {
+        // Tente un re-check au cas où l'utilisateur vient de lancer le serveur
+        __piperAvailable = null;
+        const ok = await piperHealthCheck();
+        buildVoiceGrid();
+        if (!ok) {
+          alert("Le serveur Piper n'est pas en ligne.\n\nLance dans un terminal :\n  python piper_server.py\n\nPuis reclique sur cette voix.");
+        }
+        return;
+      }
       if (locked) {
         if (confirm('Cette voix est facturée par Google (~24 €/M caractères pour Chirp3-HD).\n\nTon quota gratuit est épuisé jusqu\'au 1er juillet.\n\nDéverrouiller les voix premium ?')) {
           localStorage.setItem('epubson_premium_unlocked', '1');
@@ -949,7 +992,7 @@ async function testVoice(voice, btnEl) {
     const ssml = chirp3
       ? `<speak>${sampleText}</speak>`
       : `<speak><prosody rate="1.0">${sampleText}</prosody></speak>`;
-    const audioBuffer = await googleTTS(ssml, 3);
+    const audioBuffer = await synthesize(ssml, 3);
     selectedVoice = savedVoice;
 
     // Décodage WAV (LINEAR16 44.1kHz) → blob playable
@@ -1220,6 +1263,16 @@ function updateCostEstimate() {
     el.innerHTML = `Sélectionne au moins un chapitre pour voir l'estimation…`;
     return;
   }
+  // Backend Piper = gratuit, on saute le calcul Google
+  if (isPiperVoice(selectedVoice)) {
+    el.innerHTML = `
+      <strong style="color:var(--ink)">🟡 Backend Piper local</strong> &nbsp;·&nbsp;
+      ${totalChapters} chapitre${totalChapters>1?'s':''} · <strong>${totalChars.toLocaleString('fr')}</strong> caractères<br>
+      Coût : <strong style="color:var(--green)">0,00 €</strong> (génération 100% locale, aucun appel API)<br>
+      <span style="font-size:10px;opacity:.7">⚠ Le serveur python piper_server.py doit tourner en parallèle.</span>
+    `;
+    return;
+  }
   const { tier, usdPerM, freeM } = getVoiceTier(selectedVoice);
   const freeChars = freeM * 1_000_000;
   const billableChars = Math.max(0, totalChars - freeChars);
@@ -1382,6 +1435,15 @@ function refreshGlobalQuotaBanner() {
   if (!monthEl) return;
   const month = currentMonthKey();
   monthEl.textContent = month;
+  // Si voix actuelle est Piper → bandeau allégé (rien de facturé en local)
+  if (isPiperVoice(selectedVoice)) {
+    const total = getMonthlyTotalSpending();
+    totalEl.innerHTML = `🟡 <strong style="color:#fbbf24">Backend Piper local actif · 0 € facturable</strong>`;
+    barEl.style.width = '0%';
+    barEl.style.background = '#fbbf24';
+    detailEl.innerHTML = `Voix active <strong style="color:var(--ink)">Piper local</strong>${total.totalEur > 0 ? ` · Conso Google déjà engagée ce mois : <strong style="color:#fca5a5">${total.totalEur.toFixed(2)} €</strong>` : ''}`;
+    return;
+  }
   const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
   const used = getMonthlyChars(tier);
   const free = freeM * 1_000_000;
@@ -1850,8 +1912,8 @@ async function startConversion() {
     return;
   }
 
-  // ─── Vérif quota gratuit Google avant de lancer ───
-  {
+  // ─── Vérif quota gratuit Google avant de lancer (skip si Piper) ───
+  if (!isPiperVoice(selectedVoice)) {
     const totalChars = booksToProcess.reduce((a, b) =>
       a + b.selectedChapters.reduce((s, ch) => s + ch.text.length, 0), 0);
     const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
@@ -2015,7 +2077,7 @@ async function startConversion() {
       const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
       await Promise.all(slice.map(async idx => {
         const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
-        mp3Map[idx] = await googleTTS(ssml);
+        mp3Map[idx] = await synthesize(ssml);
         ttsDone++;
         setPhaseBar(1, ttsDone/total*100);
         setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
@@ -2850,6 +2912,95 @@ async function ttsCacheClear() {
     });
     __ttsCacheStats = { hits: 0, misses: 0, savedChars: 0 };
   } catch (_) {}
+}
+
+// ─── Piper TTS (serveur local) ─────────────────────────────────────────
+// Strip toutes les balises SSML et garde uniquement le texte (les `alt` des
+// <sub> et <phoneme> sont conservés pour ne pas perdre les substitutions).
+function stripSSMLForPiper(ssml) {
+  return ssml
+    .replace(/<sub\s+alias="([^"]*)"[^>]*>[\s\S]*?<\/sub>/g, '$1')
+    .replace(/<phoneme[^>]*>([\s\S]*?)<\/phoneme>/g, '$1')
+    .replace(/<break[^>]*\/?>/g, ' ')
+    .replace(/<prosody[^>]*>([\s\S]*?)<\/prosody>/g, '$1')
+    .replace(/<emphasis[^>]*>([\s\S]*?)<\/emphasis>/g, '$1')
+    .replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1')
+    .replace(/<say-as[^>]*>([\s\S]*?)<\/say-as>/g, '$1')
+    .replace(/<\/?speak[^>]*>/g, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function piperHealthCheck() {
+  if (__piperAvailable !== null) return __piperAvailable;
+  try {
+    const r = await fetch(`${PIPER_SERVER_URL}/health`, { method:'GET' });
+    __piperAvailable = r.ok;
+    if (r.ok) {
+      const data = await r.json();
+      console.log('[Piper] serveur OK · voix dispo :', data.voices);
+    }
+  } catch (_) {
+    __piperAvailable = false;
+  }
+  return __piperAvailable;
+}
+
+async function piperTTS(ssml, retries = 3) {
+  const voice = getVoiceObj(selectedVoice);
+  if (!voice || voice.backend !== 'piper') throw new Error('Voix non Piper');
+  const text = stripSSMLForPiper(ssml);
+  if (!text) throw new Error('Texte vide après strip SSML');
+
+  // Cache hash inclut le nom de voix → automatiquement compatible
+  const cacheHash = await ttsCacheKey(text, selectedVoice, { backend:'piper' });
+  const cached = await ttsCacheGet(cacheHash);
+  if (cached && cached.audio) {
+    __ttsCacheStats.hits++;
+    __ttsCacheStats.savedChars += cached.chars || text.length;
+    return cached.audio;
+  }
+  __ttsCacheStats.misses++;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const r = await fetch(`${PIPER_SERVER_URL}/tts`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          text,
+          model: voice.pipModel,
+          speaker_id: voice.pipSpeakerId,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.text();
+        throw new Error(`Piper ${r.status} : ${err}`);
+      }
+      const audioBuffer = await r.arrayBuffer();
+      await ttsCachePut(cacheHash, audioBuffer, text.length, selectedVoice);
+      return audioBuffer;
+    } catch (e) {
+      if (aborted) throw new Error('Aborted');
+      if (attempt === retries - 1) {
+        // Si serveur down, message clair
+        if (e.message?.includes('Failed to fetch')) {
+          throw new Error("Serveur Piper inaccessible. Lance 'python piper_server.py' dans un terminal.");
+        }
+        throw e;
+      }
+      await sleep(1000 * (attempt + 1));
+    }
+  }
+}
+
+// Dispatcher principal — choisit Google ou Piper selon la voix sélectionnée
+async function synthesize(ssml, retries) {
+  if (isPiperVoice(selectedVoice)) {
+    return await piperTTS(ssml, Math.min(retries || 3, 3));
+  }
+  return await googleTTS(ssml, retries);
 }
 
 async function googleTTS(ssml, retries = 12) {
