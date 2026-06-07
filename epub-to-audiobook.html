@@ -2498,8 +2498,13 @@ const PRONUNCIATIONS = {
 
   // ── Vocabulaire D&D / fantasy (au-delà des noms propres) ─────────────────
   // Analyse Whisper : ces mots récurrents du genre étaient mal lus.
-  'drow':           { ipa: 'dʁɔw',         alt: 'drow'         },  // était "drô" (w muet) ou "drôle"
-  'drows':          { ipa: 'dʁɔw',         alt: 'drow'         },  // pluriel s muet, même prononciation que singulier
+  // 'drow' n'étant pas un mot français, XTTS/Chirp3 lui appliquent des règles
+  // anglaises → /dʁaʊ/ avec diphtongue qui sonne comme un 's' léger.
+  // alt='dro' (sans w) → lecture FR /dʁo/ correcte sur tous les backends.
+  'drow':           { ipa: 'dʁɔw',         alt: 'dro'          },  // était "drô" / "drôle" / pluriel sonnait /dʁoʊz/
+  'drows':          { ipa: 'dʁɔw',         alt: 'dro'          },  // pluriel s muet
+  'Drow':           { ipa: 'dʁɔw',         alt: 'Dro'          },  // majuscule (début de phrase)
+  'Drows':          { ipa: 'dʁɔw',         alt: 'Dro'          },
   'halfeline':      { ipa: 'alf.lin',      alt: 'halfeline'    },  // pas "half-line"
   'halfelines':     { ipa: 'alf.lin',      alt: 'halfeline'    },  // s pluriel muet
   'face-de-lune':   { ipa: 'fasdəlyn',     alt: 'face-de-lune' },  // composé Salvatore, lu d'un trait
