@@ -788,6 +788,18 @@ function isPiperVoice(name) {
 const PIPER_SERVER_URL = 'http://127.0.0.1:5005';
 let __piperAvailable = null;  // null = inconnu, true/false = testé
 
+// Paramètres prosodie Piper — persistants localStorage
+function getPiperParams() {
+  return {
+    length_scale: parseFloat(localStorage.getItem('epubson_piper_length') || '1.10'),
+    noise_w_scale: parseFloat(localStorage.getItem('epubson_piper_noisew') || '0.9'),
+    batch_sentences: localStorage.getItem('epubson_piper_batch') !== '0',  // défaut ON
+  };
+}
+function setPiperParam(k, v) {
+  localStorage.setItem('epubson_piper_' + k, String(v));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -895,9 +907,9 @@ function buildVoiceGrid() {
   `;
   grid.appendChild(banner);
 
-  // Bandeau état serveur Piper + boutons de contrôle
+  // Bandeau état serveur Piper + boutons de contrôle + paramètres prosodie
   const piperBanner = document.createElement('div');
-  piperBanner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:rgba(251,191,36,0.06);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  piperBanner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:rgba(251,191,36,0.06);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);margin-bottom:8px';
   const piperStatus = __piperAvailable === null ? '⏳ détection…'
                     : __piperAvailable ? '✅ <strong style="color:var(--green)">serveur en ligne</strong> (localhost:5005)'
                                        : '⚠ <strong style="color:#fbbf24">serveur hors-ligne</strong> · double-clique <code style="background:rgba(255,255,255,0.08);padding:2px 5px;border-radius:3px">start_piper.bat</code>';
@@ -905,9 +917,34 @@ function buildVoiceGrid() {
     <button onclick="reconnectPiperServer(this)" style="background:transparent;border:1px solid var(--border);color:var(--ink);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">🔄 Reconnecter</button>
     ${__piperAvailable ? '<button onclick="shutdownPiperServer(this)" style="background:transparent;border:1px solid var(--border);color:#fca5a5;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">⏹ Arrêter serveur</button>' : ''}
   `;
+  const params = getPiperParams();
   piperBanner.innerHTML = `
-    <span style="flex:1">🟡 <strong style="color:var(--ink)">Voix Piper (100% local, 0 €)</strong> · ${piperStatus}</span>
-    ${buttons}
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <span style="flex:1">🟡 <strong style="color:var(--ink)">Voix Piper (100% local, 0 €)</strong> · ${piperStatus}</span>
+      ${buttons}
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--border);font-size:11px">
+      <strong style="color:var(--ink);font-size:11px">⚙️ Prosodie :</strong>
+      <label style="display:flex;align-items:center;gap:6px">
+        <span title="1.0 = vitesse normale, >1 = plus lent et expressif">Vitesse</span>
+        <input type="range" min="0.7" max="1.4" step="0.05" value="${params.length_scale}" oninput="updatePiperParam('length', this.value, 'piperLengthLabel')" style="width:80px">
+        <span id="piperLengthLabel" style="color:var(--ink);min-width:32px">${params.length_scale.toFixed(2)}</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px">
+        <span title="Variabilité de la durée des syllabes (plus humain quand >0.8)">Variabilité</span>
+        <input type="range" min="0.3" max="1.2" step="0.05" value="${params.noise_w_scale}" oninput="updatePiperParam('noisew', this.value, 'piperNoiseLabel')" style="width:80px">
+        <span id="piperNoiseLabel" style="color:var(--ink);min-width:32px">${params.noise_w_scale.toFixed(2)}</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Regroupe 4 phrases par appel → Piper ajoute des pauses naturelles aux virgules/points (+naturel mais 4× moins de progression visible)">
+        <input type="checkbox" ${params.batch_sentences ? 'checked' : ''} onchange="setPiperParam('batch', this.checked ? '1' : '0')">
+        Batch 4 phrases
+      </label>
+      <span style="margin-left:auto;display:flex;gap:6px">
+        <button onclick="applyPiperPreset('rapide')"   style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:10px">Rapide</button>
+        <button onclick="applyPiperPreset('naturel')"  style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:10px">Naturel</button>
+        <button onclick="applyPiperPreset('expressif')"  style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:10px">Expressif</button>
+      </span>
+    </div>
   `;
   grid.appendChild(piperBanner);
 
@@ -2079,17 +2116,47 @@ async function startConversion() {
     // Phase 1 : TTS
     setPhase(1,'active');
     let ttsDone = 0;
-    for (let i = 0; i < total; i += CONCURRENCY) {
-      if (aborted) { onAbort(); return; }
-      const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
-      await Promise.all(slice.map(async idx => {
-        const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
-        mp3Map[idx] = await synthesize(ssml);
-        ttsDone++;
+    // Mode Piper batch : regroupe N phrases pour meilleure prosodie
+    const piperBatch = isPiperVoice(selectedVoice) && getPiperParams().batch_sentences;
+    const PIPER_BATCH_SIZE = 4;
+    if (piperBatch) {
+      log(`🟡 Mode Piper batch activé (${PIPER_BATCH_SIZE} phrases/lot)`, 'hi');
+      for (let i = 0; i < total; i += PIPER_BATCH_SIZE) {
+        if (aborted) { onAbort(); return; }
+        const chunkIdxs = [];
+        const chunkTexts = [];
+        for (let k = i; k < Math.min(i + PIPER_BATCH_SIZE, total); k++) {
+          chunkIdxs.push(k);
+          chunkTexts.push(sentences[k].text);
+        }
+        const combined = chunkTexts.join(' ');
+        const ssml = `<speak>${escapeXml(combined)}</speak>`;
+        try {
+          const audio = await synthesize(ssml);
+          // Assigne le WAV au PREMIER index ; les suivants restent vides (skip Phase 2)
+          mp3Map[chunkIdxs[0]] = audio;
+          for (let k = 1; k < chunkIdxs.length; k++) mp3Map[chunkIdxs[k]] = null;
+        } catch (e) {
+          log(`✗ Batch ${i} : ${e.message}`, 'err');
+        }
+        ttsDone += chunkIdxs.length;
         setPhaseBar(1, ttsDone/total*100);
-        setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
-        updateGlobal(gBase + gSlice*(0.30 + ttsDone/total*0.40), `Ch.${ci+1} TTS`);
-      }));
+        setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — batch ${ttsDone}/${total}`);
+        updateGlobal(gBase + gSlice*(0.30 + ttsDone/total*0.40), `Ch.${ci+1} TTS Piper-batch`);
+      }
+    } else {
+      for (let i = 0; i < total; i += CONCURRENCY) {
+        if (aborted) { onAbort(); return; }
+        const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
+        await Promise.all(slice.map(async idx => {
+          const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
+          mp3Map[idx] = await synthesize(ssml);
+          ttsDone++;
+          setPhaseBar(1, ttsDone/total*100);
+          setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
+          updateGlobal(gBase + gSlice*(0.30 + ttsDone/total*0.40), `Ch.${ci+1} TTS`);
+        }));
+      }
     }
     setPhase(1,'done');
 
@@ -2939,6 +3006,28 @@ function stripSSMLForPiper(ssml) {
     .trim();
 }
 
+// Slider handler : met à jour le label + sauve en localStorage en temps réel
+function updatePiperParam(key, value, labelId) {
+  const v = parseFloat(value);
+  setPiperParam(key === 'length' ? 'length' : 'noisew', v);
+  const lab = document.getElementById(labelId);
+  if (lab) lab.textContent = v.toFixed(2);
+}
+
+// Presets : 1 clic pour appliquer une combinaison testée
+function applyPiperPreset(name) {
+  const presets = {
+    rapide:    { length: 0.95, noisew: 0.75, batch: '1' },   // débit rapide, narration efficace
+    naturel:   { length: 1.10, noisew: 0.90, batch: '1' },   // bon compromis (défaut)
+    expressif: { length: 1.20, noisew: 1.05, batch: '1' },   // lent et varié, livre audio premium
+  };
+  const p = presets[name] || presets.naturel;
+  setPiperParam('length', p.length);
+  setPiperParam('noisew', p.noisew);
+  setPiperParam('batch', p.batch);
+  buildVoiceGrid();  // refresh UI sliders
+}
+
 // Reconnect button : force un re-check (utile après lancement manuel du serveur)
 async function reconnectPiperServer(btn) {
   const old = btn.textContent;
@@ -3003,6 +3092,7 @@ async function piperTTS(ssml, retries = 3) {
   }
   __ttsCacheStats.misses++;
 
+  const params = getPiperParams();
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const r = await fetch(`${PIPER_SERVER_URL}/tts`, {
@@ -3012,6 +3102,8 @@ async function piperTTS(ssml, retries = 3) {
           text,
           model: voice.pipModel,
           speaker_id: voice.pipSpeakerId,
+          length_scale: params.length_scale,
+          noise_w_scale: params.noise_w_scale,
         }),
       });
       if (!r.ok) {

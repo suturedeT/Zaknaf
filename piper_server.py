@@ -144,10 +144,23 @@ def tts():
             'available': list(voices.keys()),
         }), 404
 
+    # Paramètres de prosodie tunables (défauts orientés "naturel" pour le FR)
+    length_scale = float(data.get('length_scale', 1.10))   # 1.0 = vitesse normale, >1 = plus lent et expressif
+    noise_scale  = float(data.get('noise_scale', 0.667))   # variabilité du pitch
+    noise_w     = float(data.get('noise_w_scale', 0.9))    # variabilité durée syllabes (défaut 0.8 → 0.9 = plus humain)
+    volume       = float(data.get('volume', 1.0))
+
     voice = voices[model]
     try:
         buf = io.BytesIO()
-        syn_cfg = SynthesisConfig(speaker_id=speaker_id) if speaker_id else None
+        syn_cfg = SynthesisConfig(
+            speaker_id=speaker_id if speaker_id is not None else None,
+            length_scale=length_scale,
+            noise_scale=noise_scale,
+            noise_w_scale=noise_w,
+            normalize_audio=True,
+            volume=volume,
+        )
         with wave.open(buf, 'wb') as wav:
             # synthesize_wav configure auto. les paramètres WAV (channels, rate)
             voice.synthesize_wav(text, wav, syn_config=syn_cfg, set_wav_format=True)
