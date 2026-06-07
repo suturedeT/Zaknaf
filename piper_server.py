@@ -51,11 +51,20 @@ import io
 import os
 import sys
 import wave
+
+# Force UTF-8 sur la console Windows (cp1252 par défaut ne gère pas ─, ✓, ⚠, etc.)
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 
 try:
     from piper import PiperVoice
+    from piper.config import SynthesisConfig
 except ImportError:
     print("✗ piper-tts non installé. Lance : pip install piper-tts flask flask-cors")
     sys.exit(1)
@@ -138,8 +147,10 @@ def tts():
     voice = voices[model]
     try:
         buf = io.BytesIO()
+        syn_cfg = SynthesisConfig(speaker_id=speaker_id) if speaker_id else None
         with wave.open(buf, 'wb') as wav:
-            voice.synthesize(text, wav, speaker_id=speaker_id)
+            # synthesize_wav configure auto. les paramètres WAV (channels, rate)
+            voice.synthesize_wav(text, wav, syn_config=syn_cfg, set_wav_format=True)
         buf.seek(0)
         return send_file(
             buf,
@@ -149,6 +160,7 @@ def tts():
         )
     except Exception as e:
         print(f"✗ Erreur synthèse : {e}")
+        import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 
