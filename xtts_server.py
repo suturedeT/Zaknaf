@@ -3,24 +3,38 @@
 Serveur XTTS-v2 (Coqui) local pour EpubSon — voice cloning multilingue.
 
 ────────────────────────────────────────────────────────────────────────
-INSTALLATION (une seule fois)
+INSTALLATION (une seule fois) — séquence VALIDÉE le 2026-06-07
 ────────────────────────────────────────────────────────────────────────
 
-  1. Python 3.9-3.11 (XTTS ne supporte pas encore 3.12+)
+  Le package 'TTS' original (Coqui) N'EST PLUS MAINTENU et n'est pas
+  compatible avec transformers/numpy modernes. Utilise 'coqui-tts' (fork).
 
-  2. Installer (peut prendre 5-10 min, ~3 Go de deps via torch) :
-       pip install TTS flask flask-cors
+  Python 3.9-3.11 (3.10 testé OK) — pas 3.12+
 
-     Si erreur : pip install coqui-tts flask flask-cors
-     (Coqui a forké TTS sous le nom 'coqui-tts' depuis fin 2024)
+  Séquence d'installation qui MARCHE :
 
-  3. Le modèle XTTS-v2 (~2 Go) sera téléchargé automatiquement
-     au PREMIER lancement vers :
-       Windows : %APPDATA%/tts/tts_models--multilingual--multi-dataset--xtts_v2/
-     Compte 3-5 min de download.
+      pip install flask flask-cors
+      pip install coqui-tts[codec]
+      pip install "transformers>=4.57,<5"
+      pip install --upgrade pandas
 
-  4. Au premier lancement, accepter la license CPML
-     (déjà pré-acceptée via COQUI_TOS_AGREED ci-dessous).
+  Pourquoi ces étapes :
+   - 'coqui-tts[codec]' installe coqui-tts + torchcodec (requis Pytorch 2.9+)
+   - transformers <5 car le 5.x supprime 'BeamSearchScorer' utilisé par XTTS
+   - pandas >= 2.x car numpy 2.x est incompatible avec pandas 1.x
+
+  Si l'installation a foiré (anciens TTS résiduels) :
+      pip uninstall -y TTS coqui-tts
+      rm -rf <python>/Lib/site-packages/TTS
+      pip install --force-reinstall coqui-tts[codec]
+      pip install --force-reinstall coqpit-config
+
+  Le modèle XTTS-v2 (~2 Go) est téléchargé automatiquement au PREMIER
+  lancement vers :
+      Windows : %USERPROFILE%/AppData/Local/tts/tts_models--multilingual--multi-dataset--xtts_v2/
+  Compte 3-5 min de download.
+
+  License CPML pré-acceptée via COQUI_TOS_AGREED=1 ci-dessous.
 
 ────────────────────────────────────────────────────────────────────────
 USAGE
