@@ -537,6 +537,20 @@ header {
       <div id="cachePanelContent" style="flex:1">Cache audio : chargement…</div>
       <button id="cacheClearBtn" onclick="clearTTSCacheUI()" style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">🗑 Vider</button>
     </div>
+    <!-- Compteur mensuel + limite quota gratuit -->
+    <div id="quotaPanel" style="background:var(--lift);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink-dim);line-height:1.6">
+      <div id="quotaPanelContent">Quota mensuel : chargement…</div>
+      <div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden">
+        <div id="quotaBar" style="height:100%;width:0%;background:#86efac;transition:width 0.3s,background 0.3s"></div>
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:11px">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="quotaHardBlock" onchange="saveQuotaSettings()">
+          Bloquer le dépassement du quota gratuit
+        </label>
+        <button onclick="resetMonthlyQuota()" style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:10px">↺ Reset mensuel</button>
+      </div>
+    </div>
     <button id="convertBtn" onclick="startConversion()">
       🎙 Lancer la conversion (<span id="queueCount">0</span> livre<span id="queuePlural"></span>)
     </button>
@@ -788,7 +802,7 @@ function buildVoiceGrid() {
     const d = document.createElement('div');
     d.className = 'voice-card' + (v.name === selectedVoice ? ' sel' : '');
     d.innerHTML = `<div class="vc-name">${v.label} <span class="tag ${v.type}">${v.type === 'n2' ? 'Neural2' : 'WaveNet'}</span></div><div class="vc-meta">${v.gen} · ${v.desc}</div>`;
-    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); updateCostEstimate(); refreshCachePanel(); };
+    d.onclick = () => { selectedVoice = v.name; localStorage.setItem('epubson_voice', v.name); buildVoiceGrid(); updateCostEstimate(); refreshCachePanel(); refreshQuotaPanel(); };
     grid.appendChild(d);
   });
 }
@@ -984,6 +998,7 @@ function renderBooksQueue() {
   }
   updateCostEstimate();
   refreshCachePanel();
+  refreshQuotaPanel();
 }
 
 // ─── Estimation de coût Google TTS avant lancement ────────────────────────
@@ -1051,6 +1066,69 @@ async function clearTTSCacheUI() {
   if (!confirm('Vider tout le cache audio TTS ? Les prochaines conversions seront refacturées par Google.')) return;
   await ttsCacheClear();
   await refreshCachePanel();
+}
+
+// ─── Compteur mensuel de caractères facturés à Google ────────────────────
+// Stocké par mois (YYYY-MM) ET par tier de voix, car les quotas gratuits
+// sont indépendants (Chirp3-HD 1M, Neural2 1M, Standard 4M, Studio 100K).
+function currentMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+function quotaStoreKey(tier, month) {
+  return `epubson_chars_${month}_${tier}`;
+}
+function getMonthlyChars(tier) {
+  return parseInt(localStorage.getItem(quotaStoreKey(tier, currentMonthKey())) || '0', 10);
+}
+function addMonthlyChars(tier, n) {
+  const k = quotaStoreKey(tier, currentMonthKey());
+  const v = parseInt(localStorage.getItem(k) || '0', 10) + n;
+  localStorage.setItem(k, String(v));
+  return v;
+}
+function isHardBlockEnabled() {
+  return localStorage.getItem('epubson_quota_hardblock') === '1';
+}
+function saveQuotaSettings() {
+  const cb = document.getElementById('quotaHardBlock');
+  localStorage.setItem('epubson_quota_hardblock', cb.checked ? '1' : '0');
+}
+function resetMonthlyQuota() {
+  if (!confirm('Réinitialiser le compteur mensuel à 0 ? À faire si tu sais que Google a fait son reset.')) return;
+  // Reset toutes les tiers pour le mois courant
+  ['Chirp3-HD','Studio','Neural2','WaveNet','Polyglot','Standard'].forEach(t => {
+    localStorage.removeItem(quotaStoreKey(t, currentMonthKey()));
+  });
+  refreshQuotaPanel();
+}
+function refreshQuotaPanel() {
+  const el = document.getElementById('quotaPanelContent');
+  if (!el) return;
+  const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
+  const used = getMonthlyChars(tier);
+  const free = freeM * 1_000_000;
+  const pct = Math.min(100, (used / free) * 100);
+  const over = Math.max(0, used - free);
+  const overEur = ((over / 1_000_000) * usdPerM * USD_TO_EUR).toFixed(2);
+  const month = currentMonthKey();
+
+  let color = '#86efac'; // vert
+  if (pct >= 100) color = '#fca5a5';        // rouge
+  else if (pct >= 80) color = '#fdba74';    // orange
+  else if (pct >= 50) color = '#fde047';    // jaune
+
+  el.innerHTML = `
+    <strong style="color:var(--ink)">📊 Quota gratuit Google TTS</strong> · ${month} · voix <strong>${tier}</strong><br>
+    <strong>${used.toLocaleString('fr')}</strong> / ${free.toLocaleString('fr')} caractères facturés (<strong style="color:${color}">${pct.toFixed(1)}%</strong>)
+    ${over > 0 ? `<br><span style="color:#fca5a5">⚠ Dépassement : ${over.toLocaleString('fr')} caractères → ~${overEur} € à payer</span>` : ''}
+    <br><span style="font-size:10px;opacity:.7">Le compteur est local au navigateur — il s'incrémente uniquement sur les appels Google effectifs (cache miss). Google reset le quota le 1er du mois.</span>
+  `;
+  const bar = document.getElementById('quotaBar');
+  if (bar) { bar.style.width = `${pct}%`; bar.style.background = color; }
+  // Restore checkbox state
+  const cb = document.getElementById('quotaHardBlock');
+  if (cb) cb.checked = isHardBlockEnabled();
 }
 
 function removeBookFromQueue(bi) {
@@ -1453,6 +1531,40 @@ async function startConversion() {
   if (booksToProcess.length === 0) {
     alert('Sélectionnez au moins un chapitre dans au moins un livre.');
     return;
+  }
+
+  // ─── Vérif quota gratuit Google avant de lancer ───
+  {
+    const totalChars = booksToProcess.reduce((a, b) =>
+      a + b.selectedChapters.reduce((s, ch) => s + ch.text.length, 0), 0);
+    const { tier, freeM, usdPerM } = getVoiceTier(selectedVoice);
+    const already = getMonthlyChars(tier);
+    const free    = freeM * 1_000_000;
+    const projected = already + totalChars;
+    if (projected > free) {
+      const over = projected - free;
+      const overEur = ((over / 1_000_000) * usdPerM * USD_TO_EUR).toFixed(2);
+      if (isHardBlockEnabled()) {
+        alert(
+          `🚫 BLOQUÉ — Dépassement du quota gratuit\n\n` +
+          `Voix ${tier} : quota ${free.toLocaleString('fr')} car/mois\n` +
+          `Déjà utilisé ce mois : ${already.toLocaleString('fr')}\n` +
+          `Cette conversion : ${totalChars.toLocaleString('fr')}\n` +
+          `→ Dépassement : ${over.toLocaleString('fr')} car ≈ ${overEur} €\n\n` +
+          `Désactive le blocage dans le panneau quota si tu acceptes la facturation.`
+        );
+        return;
+      }
+      const ok = confirm(
+        `⚠ ATTENTION — Tu vas dépasser le quota gratuit Google\n\n` +
+        `Voix ${tier} : quota ${free.toLocaleString('fr')} car/mois\n` +
+        `Déjà utilisé : ${already.toLocaleString('fr')}\n` +
+        `Cette conversion : ${totalChars.toLocaleString('fr')}\n` +
+        `→ Dépassement facturé : ${over.toLocaleString('fr')} car ≈ ${overEur} €\n\n` +
+        `Lancer quand même ?`
+      );
+      if (!ok) return;
+    }
   }
 
   aborted = false;
@@ -2492,6 +2604,8 @@ async function googleTTS(ssml, retries = 12) {
       const bytes = Uint8Array.from(atob(data.audioContent), c => c.charCodeAt(0));
       // ─── CACHE WRITE : stocke pour les futurs ré-encodages ───
       await ttsCachePut(cacheHash, bytes.buffer, inputSSML.length, selectedVoice);
+      // ─── COMPTEUR MENSUEL : appel Google effectif → on facture ───
+      addMonthlyChars(getVoiceTier(selectedVoice).tier, inputSSML.length);
       return bytes.buffer;
     } catch(e) {
       if (aborted) throw new Error('Aborted');
