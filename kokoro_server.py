@@ -223,6 +223,15 @@ def sanitize_text(text):
     text = re.sub(r'\s+', ' ', text)
     # Trim espace avant ponctuation
     text = re.sub(r'\s+([,.!?;:])', r'\1', text)
+
+    # ── RENFORCEMENT INTONATION INTERROGATIVE ────────────────────────
+    # espeak-ng FR a une intonation montante très faible sur '?' isolé.
+    # Astuce : doubler le '?' fait amplifier la modulation pitch montante
+    # par le générateur prosodique (effet "double interrogation"). On
+    # n'applique qu'aux phrases interrogatives normales, pas aux '?!'
+    # ou '??' déjà présents (sinon répétition).
+    text = re.sub(r'(?<![?!])\?(?![?!])', '??', text)
+
     return text.strip()
 
 

@@ -3751,7 +3751,7 @@ async function kokoroTTS(ssml, retries = 3) {
           text,
           voice: voice.kokoroVoice,
           language: 'fr-fr',
-          speed: 1.0,
+          speed: parseFloat(localStorage.getItem('epubson_kokoro_speed') || '0.9'),
         }),
       });
       if (!r.ok) {
