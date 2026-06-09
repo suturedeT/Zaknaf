@@ -165,7 +165,23 @@ INVISIBLE_CHARS_RE = re.compile(
 )
 
 
+# ── Mots où espeak FR rate la liaison même avec '-' (bug interne) ──
+# On force avant tout par substitution caractère :
+#   son  + voyelle  -> sõn   (õ = U+00F5, espeak garde /sɔ̃n/ correctement)
+#   moyen + voyelle -> moyenn (perd la nasalisation, mais le /n/ liaison passe)
+#   doit + voyelle  -> doitt (gagne le /t/ liaison)
+ESPEAK_LIAISON_FIXES = [
+    (re.compile(rf'\bson\s+([{V}])', re.IGNORECASE), r'sõn \1'),
+    (re.compile(rf'\bmoyen\s+([{V}])', re.IGNORECASE), r'moyenn \1'),
+    (re.compile(rf'\bdoit\s+([{V}])', re.IGNORECASE), r'doitt \1'),
+]
+
+
 def apply_french_liaisons(text):
+    # 1) Pré-corrections pour mots où espeak rate la liaison nativement
+    for pattern, repl in ESPEAK_LIAISON_FIXES:
+        text = pattern.sub(repl, text)
+    # 2) Règles génériques (trait d'union pour fusion phonétique)
     for pattern, repl in LIAISON_RULES:
         text = pattern.sub(repl, text)
     for h in H_ASPIRE:
