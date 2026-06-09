@@ -137,6 +137,13 @@ def apply_french_liaisons(text):
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# Chrome 117+ Private Network Access policy : un origin HTTPS public
+# (github.io) ne peut pas faire de requêtes vers loopback sans ce header.
+@app.after_request
+def add_pna_header(response):
+    response.headers['Access-Control-Allow-Private-Network'] = 'true'
+    return response
+
 voices = {}
 
 

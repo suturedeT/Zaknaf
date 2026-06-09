@@ -208,6 +208,14 @@ RELOAD_AFTER_ERRORS = 2
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# Chrome 117+ Private Network Access policy : un origin HTTPS public (comme
+# github.io) ne peut pas faire de requêtes vers une adresse loopback sans
+# que le serveur loopback explicite son consentement via ce header.
+@app.after_request
+def add_pna_header(response):
+    response.headers['Access-Control-Allow-Private-Network'] = 'true'
+    return response
+
 
 @app.route('/health', methods=['GET'])
 def health():
