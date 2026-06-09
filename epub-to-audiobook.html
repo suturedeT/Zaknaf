@@ -3318,6 +3318,89 @@ async function xttsListVoices() {
   return __xttsVoices;
 }
 
+// Concat plusieurs WAV PCM 16-bit mono même fréquence en un seul WAV.
+function concatWavBuffers(buffers) {
+  if (buffers.length === 1) return buffers[0];
+  // Format WAV : header 44 octets standard. On lit fréquence depuis le 1er.
+  const first = new DataView(buffers[0]);
+  const sampleRate = first.getUint32(24, true);
+  let totalDataLen = 0;
+  const dataChunks = [];
+  for (const buf of buffers) {
+    // Cherche le chunk 'data' (peut ne pas être à l'offset 36 si chunk fmt étendu)
+    const view = new DataView(buf);
+    let offset = 12;
+    while (offset < buf.byteLength - 8) {
+      const chunkId = String.fromCharCode(view.getUint8(offset), view.getUint8(offset+1), view.getUint8(offset+2), view.getUint8(offset+3));
+      const chunkSize = view.getUint32(offset+4, true);
+      if (chunkId === 'data') {
+        const samples = buf.slice(offset+8, offset+8+chunkSize);
+        dataChunks.push(samples);
+        totalDataLen += samples.byteLength;
+        break;
+      }
+      offset += 8 + chunkSize;
+    }
+  }
+  // Construit le nouveau WAV
+  const out = new ArrayBuffer(44 + totalDataLen);
+  const dv = new DataView(out);
+  // RIFF header
+  dv.setUint8(0, 0x52); dv.setUint8(1, 0x49); dv.setUint8(2, 0x46); dv.setUint8(3, 0x46); // "RIFF"
+  dv.setUint32(4, 36 + totalDataLen, true);
+  dv.setUint8(8, 0x57); dv.setUint8(9, 0x41); dv.setUint8(10, 0x56); dv.setUint8(11, 0x45); // "WAVE"
+  // fmt chunk
+  dv.setUint8(12, 0x66); dv.setUint8(13, 0x6d); dv.setUint8(14, 0x74); dv.setUint8(15, 0x20); // "fmt "
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true);                  // PCM
+  dv.setUint16(22, 1, true);                  // mono
+  dv.setUint32(24, sampleRate, true);
+  dv.setUint32(28, sampleRate * 2, true);     // byte rate
+  dv.setUint16(32, 2, true);                  // block align
+  dv.setUint16(34, 16, true);                 // bits
+  // data chunk
+  dv.setUint8(36, 0x64); dv.setUint8(37, 0x61); dv.setUint8(38, 0x74); dv.setUint8(39, 0x61); // "data"
+  dv.setUint32(40, totalDataLen, true);
+  let pos = 44;
+  for (const chunk of dataChunks) {
+    new Uint8Array(out, pos, chunk.byteLength).set(new Uint8Array(chunk));
+    pos += chunk.byteLength;
+  }
+  return out;
+}
+
+// Envoie 1 fragment à XTTS et retourne le WAV. Sans split ni cache.
+async function xttsTTSOne(text, voice, lang, speed, retries) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const r = await fetch(`${XTTS_SERVER_URL}/tts`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ text, voice, language: lang, speed }),
+      });
+      if (!r.ok) {
+        const err = await r.text();
+        if (r.status === 503) {
+          if (attempt < retries - 1) {
+            const waitMs = 5000 + attempt * 3000;
+            log(`⚠ XTTS 503 OOM/runaway, attente ${(waitMs/1000)|0}s avant retry…`, 'err');
+            await sleep(waitMs);
+            continue;
+          }
+        }
+        // 422 = tokenizer index error, inutile de retry
+        if (r.status === 422) throw new Error(`XTTS 422 tokenizer : ${err}`);
+        throw new Error(`XTTS ${r.status} : ${err}`);
+      }
+      return await r.arrayBuffer();
+    } catch (e) {
+      if (aborted) throw new Error('Aborted');
+      if (attempt === retries - 1) throw e;
+      await sleep(1000 * (attempt + 1));
+    }
+  }
+}
+
 async function xttsTTS(ssml, retries = 4) {
   const v = getVoiceObj(selectedVoice);
   if (!v || v.backend !== 'xtts') throw new Error('Voix non XTTS');
@@ -3333,9 +3416,26 @@ async function xttsTTS(ssml, retries = 4) {
   }
   __ttsCacheStats.misses++;
 
+  // CRITIQUE : XTTS-v2 a un cap par langue (FR=253). Au-delà → "index out of range in self".
+  // On pre-split agressivement à 240 pour garder une marge (le cleaner XTTS peut allonger).
+  const XTTS_FR_LIMIT = 240;
+  const params = getXttsParams();
+  if (text.length > XTTS_FR_LIMIT) {
+    const fragments = forceSplitLongSentence(text, XTTS_FR_LIMIT);
+    log(`  ↳ XTTS : texte ${text.length} chars découpé en ${fragments.length} fragments`, 'info');
+    const wavs = [];
+    for (const frag of fragments) {
+      if (aborted) throw new Error('Aborted');
+      const wav = await xttsTTSOne(frag, v.xttsVoice, 'fr', params.speed, retries);
+      wavs.push(wav);
+    }
+    const merged = concatWavBuffers(wavs);
+    await ttsCachePut(cacheHash, merged, text.length, selectedVoice);
+    return merged;
+  }
+
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const params = getXttsParams();
       const r = await fetch(`${XTTS_SERVER_URL}/tts`, {
         method:'POST',
         headers:{'Content-Type':'application/json'},

@@ -296,12 +296,22 @@ def synth():
             'available': [v['name'] for v in list_voices()],
         }), 404
 
-    # Guard mémoire : XTTS-v2 plafonne à ~250 tokens/lang. Texte trop long → OOM.
-    MAX_TEXT_LEN = 400
+    # Guard CRITIQUE : XTTS-v2 a une limite codée en dur par langue
+    # (max_text_length du modèle). Dépasser → "index out of range in self"
+    # car le tokenizer produit un index > vocab_size.
+    #   en: 250 / fr: 253 / de: 253 / es: 239 / it: 213 / ru: 182 / etc.
+    # On prend 250 comme plafond conservateur multilingue.
+    PER_LANG_LIMIT = {
+        'en': 250, 'fr': 253, 'de': 253, 'es': 239, 'it': 213,
+        'pt': 203, 'pl': 224, 'nl': 251, 'tr': 226, 'ru': 182,
+        'cs': 186, 'ar': 166, 'zh-cn': 82, 'ja': 71, 'hu': 224, 'ko': 95,
+    }
+    MAX_TEXT_LEN = PER_LANG_LIMIT.get(language, 200)
     if len(text) > MAX_TEXT_LEN:
         return jsonify({
-            'error': f'texte trop long ({len(text)} chars > {MAX_TEXT_LEN})',
+            'error': f'texte trop long ({len(text)} chars > {MAX_TEXT_LEN} pour {language})',
             'hint': 'split the text into smaller chunks before sending',
+            'max_len': MAX_TEXT_LEN,
         }), 413
 
     global __error_streak
@@ -378,9 +388,28 @@ def synth():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+    except IndexError as e:
+        # "index out of range in self" : tokenizer XTTS a produit un index
+        # hors vocab → texte trop long OU caractère pathologique.
+        gc.collect()
+        msg = str(e)
+        print(f"  ✗ IndexError tokenizer : {msg}")
+        print(f"     len={len(text)} lang={language} voice={voice}")
+        print(f"     TEXT FAUTIF : {repr(text)}")
+        # Log les caractères non-ASCII pour identifier les pathologiques
+        non_ascii = sorted({c for c in text if ord(c) > 127})
+        if non_ascii:
+            print(f"     non-ASCII : {non_ascii}")
+        return jsonify({
+            'error': 'tokenizer_index',
+            'detail': msg,
+            'text_len': len(text),
+            'hint': 'text contient peut-être un caractère pathologique ou un fragment > limite langue',
+        }), 422
     except Exception as e:
         gc.collect()
         print(f"  ✗ Erreur synthèse : {e}")
+        print(f"     TEXT : {repr(text[:200])}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
