@@ -54,7 +54,15 @@ import io
 import os
 import re
 import sys
+import threading
 import wave
+
+# Lock global : kokoro_onnx.Kokoro a un état interne (session ONNX + tokenizer
+# + tampons) qui peut être corrompu par appels concurrents Flask threaded.
+# Symptôme observé : audio de la requête A retourné à la requête B, mots
+# mélangés entre phrases adjacentes. La synthèse étant courte (~secondes),
+# sérialiser n'a pas d'impact perceptible sur le throughput global.
+_SYNTH_LOCK = threading.Lock()
 
 # UTF-8 sur la console Windows
 try:
@@ -277,8 +285,13 @@ def voices_endpoint():
 
 
 def synth_one(text, voice, speed, lang):
-    """Synthétise UN fragment, propage l'exception phonemizer si besoin."""
-    samples, sr = kokoro.create(text, voice=voice, speed=speed, lang=lang)
+    """Synthétise UN fragment, propage l'exception phonemizer si besoin.
+
+    Sérialisé via _SYNTH_LOCK : appels concurrents corrompent l'état interne
+    de kokoro_onnx (audio cross-talk entre requêtes Flask threaded).
+    """
+    with _SYNTH_LOCK:
+        samples, sr = kokoro.create(text, voice=voice, speed=speed, lang=lang)
     return samples, sr
 
 
