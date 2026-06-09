@@ -3030,6 +3030,14 @@ ${chunks[ci]}`;
 // CLAUDE SSML BATCH
 // ─────────────────────────────────────────────────────────────────────────────
 async function generateSSMLBatch(sentences) {
+  // Backends LOCAUX (Piper / XTTS / Kokoro) : on bypass Claude TOTALEMENT.
+  // Le SSML est de toute façon strippé en plain text avant TTS (stripSSMLForPiper),
+  // et Claude peut RÉÉCRIRE/RÉORDONNER/DUPLIQUER les mots quand il enrichit
+  // → on aurait du contenu mangled qui finit dans l'audio Piper/Kokoro.
+  // Pour ces backends, le texte source brut suffit.
+  if (isLocalBackend(selectedVoice)) {
+    return sentences.map(s => `<speak>${escapeXml(s)}</speak>`);
+  }
   // Si Claude est désactivé via le toggle, on génère un SSML simple sans
   // appel API : chaque phrase est juste enveloppée dans <speak> puis traitée
   // par fixSSMLElisions (qui applique les substitutions personnalisées et
