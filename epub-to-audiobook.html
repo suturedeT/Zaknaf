@@ -3433,58 +3433,35 @@ async function xttsTTS(ssml, retries = 4) {
 
   // CRITIQUE : XTTS-v2 a un cap par langue (FR=253). Au-delà → "index out of range in self".
   // On pre-split agressivement à 240 pour garder une marge (le cleaner XTTS peut allonger).
-  // Limite agressive : le cleaner XTTS peut allonger (chiffres → mots),
-  // donc on prend une grosse marge sous la limite réelle de 253.
-  const XTTS_FR_LIMIT = 200;
+  // Limite agressive : le cleaner XTTS expanse les chiffres ("1457" →
+  // "mille quatre cent cinquante-sept"), donc 1 char source peut devenir
+  // ~2 tokens. On vise 150 chars max pour rester sous 253 tokens même
+  // sur les pires cas (mais le re-split récursif rattrape les survivants).
+  const XTTS_FR_LIMIT = 150;
   const params = getXttsParams();
-  if (text.length > XTTS_FR_LIMIT) {
-    const fragments = forceSplitLongSentence(text, XTTS_FR_LIMIT);
+  // Chemin unifié : on découpe TOUJOURS via forceSplitLongSentence (qui
+  // retourne [text] si le texte est déjà court) puis on envoie chaque
+  // fragment via xttsTTSOne qui gère 422 par re-split récursif.
+  const fragments = text.length > XTTS_FR_LIMIT
+    ? forceSplitLongSentence(text, XTTS_FR_LIMIT)
+    : [text];
+  if (fragments.length > 1) {
     log(`  ↳ XTTS : texte ${text.length} chars découpé en ${fragments.length} fragments`, 'info');
+  }
+  try {
     const wavs = [];
     for (const frag of fragments) {
       if (aborted) throw new Error('Aborted');
-      const wav = await xttsTTSOne(frag, v.xttsVoice, 'fr', params.speed, retries);
-      wavs.push(wav);
+      wavs.push(await xttsTTSOne(frag, v.xttsVoice, 'fr', params.speed, retries));
     }
-    const merged = concatWavBuffers(wavs);
+    const merged = wavs.length === 1 ? wavs[0] : concatWavBuffers(wavs);
     await ttsCachePut(cacheHash, merged, text.length, selectedVoice);
     return merged;
-  }
-
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      const r = await fetch(`${XTTS_SERVER_URL}/tts`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ text, voice: v.xttsVoice, language: 'fr', speed: params.speed }),
-      });
-      if (!r.ok) {
-        const err = await r.text();
-        // 503 = OOM/runaway → le serveur a sans doute rechargé le modèle.
-        // Attendre plus longtemps avant de retry.
-        if (r.status === 503) {
-          if (attempt < retries - 1) {
-            const waitMs = 5000 + attempt * 3000;  // 5s, 8s, 11s, 14s
-            log(`⚠ XTTS 503 OOM/runaway, attente ${(waitMs/1000)|0}s avant retry…`, 'err');
-            await sleep(waitMs);
-            continue;
-          }
-        }
-        throw new Error(`XTTS ${r.status} : ${err}`);
-      }
-      const audioBuffer = await r.arrayBuffer();
-      await ttsCachePut(cacheHash, audioBuffer, text.length, selectedVoice);
-      return audioBuffer;
-    } catch (e) {
-      if (aborted) throw new Error('Aborted');
-      if (attempt === retries - 1) {
-        if (e.message?.includes('Failed to fetch')) {
-          throw new Error("Serveur XTTS inaccessible. Lance start_xtts.bat dans un terminal.");
-        }
-        throw e;
-      }
-      await sleep(1000 * (attempt + 1));
+  } catch (e) {
+    if (e.message?.includes('Failed to fetch')) {
+      throw new Error("Serveur XTTS inaccessible. Lance start_xtts.bat dans un terminal.");
     }
+    throw e;
   }
 }
 
