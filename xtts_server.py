@@ -180,8 +180,13 @@ print(f"  Modèle : {MODEL_NAME}")
 print(f"  (téléchargement ~2 Go au premier lancement)")
 print(f"  Chargement en cours…", flush=True)
 
-try:
+tts = None
+def load_model():
+    global tts
     tts = TTS(MODEL_NAME).to(device)
+
+try:
+    load_model()
     print(f"  ✓ XTTS-v2 prêt sur {device.upper()}")
 except Exception as e:
     print(f"  ✗ Erreur de chargement : {e}")
@@ -191,6 +196,12 @@ except Exception as e:
 
 # Sample rate de sortie XTTS = 24000 Hz
 XTTS_SR = 24000
+# Garde-fou audio : XTTS-v2 peut partir en runaway generation et produire
+# 60 min d'audio pour 2 phrases. On cap à 90s = ~2.16M samples à 24kHz.
+MAX_OUTPUT_SAMPLES = 90 * XTTS_SR
+# Compteur d'erreurs successives pour déclencher un reload du modèle
+__error_streak = 0
+RELOAD_AFTER_ERRORS = 2
 
 
 # ── Init Flask + CORS ─────────────────────────────────────────────────
@@ -285,6 +296,7 @@ def synth():
             'hint': 'split the text into smaller chunks before sending',
         }), 413
 
+    global __error_streak
     try:
         # split_sentences=True : XTTS découpe sur la ponctuation → meilleure prosodie
         audio = tts.tts(
@@ -298,6 +310,26 @@ def synth():
         gc.collect()
         if isinstance(audio, list):
             audio = np.array(audio, dtype=np.float32)
+        # Garde-fou runaway generation : si XTTS a produit > 90s d'audio
+        # pour un input court, c'est qu'il est en boucle infinie. Reject.
+        if audio.shape[0] > MAX_OUTPUT_SAMPLES:
+            duration = audio.shape[0] / XTTS_SR
+            print(f"  ✗ Runaway detected : {duration:.1f}s audio pour {len(text)} chars (text='{text[:80]}...')")
+            __error_streak += 1
+            if __error_streak >= RELOAD_AFTER_ERRORS:
+                print(f"  ⚠ {__error_streak} erreurs successives → reload du modèle")
+                try:
+                    load_model()
+                    __error_streak = 0
+                except Exception as e:
+                    print(f"  ✗ Reload failed : {e}")
+            return jsonify({
+                'error': 'runaway',
+                'detail': f'XTTS a généré {duration:.0f}s pour {len(text)} chars — boucle détectée',
+                'hint': 'simplify text or restart server',
+            }), 503
+        # Reset streak on success
+        __error_streak = 0
         # Normalise et convertit en int16
         audio = np.clip(audio, -1.0, 1.0)
         audio_i16 = (audio * 32767).astype(np.int16)
@@ -311,16 +343,28 @@ def synth():
         buf.seek(0)
         return send_file(buf, mimetype='audio/wav',
                          as_attachment=False, download_name='xtts.wav')
-    except RuntimeError as e:
-        # OOM ou échec d'allocation mémoire : on libère et on signale clairement
+    except (RuntimeError, MemoryError, np.core._exceptions._ArrayMemoryError) as e:
         gc.collect()
         msg = str(e)
-        if 'alloc' in msg.lower() or 'memory' in msg.lower() or 'enforce fail' in msg.lower():
-            print(f"  ✗ OOM mémoire : {msg[:200]}")
+        is_oom = ('alloc' in msg.lower() or 'memory' in msg.lower()
+                  or 'enforce fail' in msg.lower() or 'unable to allocate' in msg.lower())
+        if is_oom:
+            __error_streak += 1
+            print(f"  ✗ OOM ({__error_streak}/{RELOAD_AFTER_ERRORS}) : {msg[:200]}")
+            print(f"     text='{text[:80]}...'")
+            if __error_streak >= RELOAD_AFTER_ERRORS:
+                print(f"  ⚠ {__error_streak} OOM successives → reload du modèle XTTS-v2")
+                try:
+                    load_model()
+                    gc.collect()
+                    __error_streak = 0
+                    print(f"  ✓ Modèle rechargé, prêt à servir à nouveau")
+                except Exception as reload_err:
+                    print(f"  ✗ Reload failed : {reload_err}")
             return jsonify({
                 'error': 'OOM',
                 'detail': msg[:500],
-                'hint': 'reduce batch size or text length',
+                'hint': 'model reloaded — client should retry',
             }), 503
         print(f"  ✗ Erreur synthèse : {e}")
         import traceback
