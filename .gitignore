@@ -12,3 +12,5 @@ test_*.wav
 
 # XTTS voices upload directory
 voices/
+chap18_*.txt
+test_*.wav
