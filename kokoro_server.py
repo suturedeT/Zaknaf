@@ -92,6 +92,28 @@ except ImportError:
     print("    pip install kokoro-onnx flask flask-cors soundfile")
     sys.exit(1)
 
+# ─── Monkey-patch phonemizer : désactive le words_mismatch ───────────
+# Bug 1 (HTTP 500) : _mismatched_lines() raise quand espeak produit un
+# nombre de lignes différent de l'input. Cause : nom propre exotique
+# (Yozumian) que espeak décompose en syllabes -> compte de "lignes" différent.
+# Bug 2 (mots droppés) : Remove.process() supprime carrément les lignes
+# mismatch -> "Car le doyen des prêtres" devient "c pretre" si le bloc
+# entier est jeté.
+# Solution : on remplace _mismatched_lines() pour ne JAMAIS raise et
+# retourner liste vide -> aucun drop, juste les phonèmes bruts d'espeak.
+try:
+    from phonemizer.backend.espeak import words_mismatch as _wm_mod
+    _wm_mod.BaseWordsMismatch._mismatched_lines = lambda self: []
+    _wm_mod.BaseWordsMismatch._resume = lambda self, n, m: None
+    # Override aussi les classes concrètes pour être sûr
+    _wm_mod.Ignore.process = lambda self, text: text
+    _wm_mod.Warn.process = lambda self, text: text
+    _wm_mod.Remove.process = lambda self, text: text
+    print("  OK phonemizer monkey-patche (words_mismatch desactive)")
+except Exception as _e:
+    print(f"  ! Patch phonemizer impossible : {_e}")
+    print(f"    (le bug 'mots droppes' peut subsister)")
+
 try:
     import numpy as np
 except ImportError:
