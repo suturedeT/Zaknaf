@@ -790,6 +790,15 @@ function getVoiceObj(name) {
     const xv = __xttsVoices.find(x => x.name === vname);
     if (xv) return { name, label: xv.name, backend: 'xtts', xttsVoice: xv.name, gen: '—', type: 'xtts', desc: 'Voice cloning' };
   }
+  // Voix Kokoro dynamiques (ff_siwis, etc.)
+  if (name.startsWith('kokoro:')) {
+    const vname = name.slice(7);
+    const kv = __kokoroVoices.find(x => x.name === vname);
+    if (kv) {
+      const genLabel = kv.gender === 'F' ? 'Femme' : kv.gender === 'M' ? 'Homme' : '—';
+      return { name, label: kv.name, backend: 'kokoro', kokoroVoice: kv.name, gen: genLabel, type: 'kokoro', desc: 'Kokoro · ONNX rapide' };
+    }
+  }
   return null;
 }
 function isPiperVoice(name) {
@@ -801,15 +810,21 @@ function isPiperVoice(name) {
 function isXttsVoice(name) {
   return !!(name && name.startsWith('xtts:'));
 }
-// "Local backend" = pas Google = gratuit (Piper ou XTTS)
-function isLocalBackend(name) {
-  return isPiperVoice(name) || isXttsVoice(name);
+function isKokoroVoice(name) {
+  return !!(name && name.startsWith('kokoro:'));
 }
-const PIPER_SERVER_URL = 'http://127.0.0.1:5005';
-const XTTS_SERVER_URL  = 'http://127.0.0.1:5006';
-let __piperAvailable = null;  // null = inconnu, true/false = testé
-let __xttsAvailable  = null;
-let __xttsVoices     = [];    // liste dynamique des voix clonées
+// "Local backend" = pas Google = gratuit (Piper, XTTS, Kokoro)
+function isLocalBackend(name) {
+  return isPiperVoice(name) || isXttsVoice(name) || isKokoroVoice(name);
+}
+const PIPER_SERVER_URL  = 'http://127.0.0.1:5005';
+const XTTS_SERVER_URL   = 'http://127.0.0.1:5006';
+const KOKORO_SERVER_URL = 'http://127.0.0.1:5007';
+let __piperAvailable  = null;  // null = inconnu, true/false = testé
+let __xttsAvailable   = null;
+let __kokoroAvailable = null;
+let __xttsVoices      = [];    // liste dynamique des voix clonées XTTS
+let __kokoroVoices    = [];    // liste dynamique des voix Kokoro (FR par défaut)
 
 // Paramètres prosodie Piper — persistants localStorage
 function getPiperParams() {
@@ -921,14 +936,147 @@ xttsHealthCheck().then(ok => {
   console.log('[XTTS] disponible =', ok, '· voix=', __xttsVoices.length);
   buildVoiceGrid();
 });
+kokoroHealthCheck().then(ok => {
+  console.log('[Kokoro] disponible =', ok, '· voix=', __kokoroVoices.length);
+  buildVoiceGrid();
+});
 if (gcpApiKey && claudeApiKey) showStep2();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VOICE GRID
 // ─────────────────────────────────────────────────────────────────────────────
+// Construit les <option> d'un <select> avec les voix d'un backend donné.
+// Retourne le HTML innerHTML d'un <select> (sans la balise <select>).
+function buildVoiceOptions(backendName, voicesList) {
+  const opts = ['<option value="">— Choisir —</option>'];
+  for (const v of voicesList) {
+    const sel = (v.name === selectedVoice) ? ' selected' : '';
+    const meta = v.gen ? ` · ${v.gen}` : '';
+    opts.push(`<option value="${v.name}"${sel}>${v.label}${meta}</option>`);
+  }
+  return opts.join('');
+}
+
+// Liste filtrée des voix Google groupées par tier
+function getGoogleVoicesByTier() {
+  const unlocked = isPremiumUnlocked();
+  const groups = { std: [], wn: [], n2: [], c3hd: [] };
+  for (const v of VOICES) {
+    if (v.backend) continue;  // skip Piper/etc.
+    const premium = isPremiumVoice(v.name);
+    if (premium && !unlocked) continue;
+    if (groups[v.type]) groups[v.type].push(v);
+  }
+  return groups;
+}
+
+// Liste des voix Piper (extraite de VOICES)
+function getPiperVoicesList() {
+  return VOICES.filter(v => v.backend === 'piper');
+}
+
+// Construit le panneau des 4 dropdowns (Google / Piper / XTTS / Kokoro)
+function buildSourceDropdowns() {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'grid-column:1/-1;padding:14px;background:rgba(168,85,247,0.06);border:1px solid var(--border);border-radius:10px;margin-bottom:12px';
+
+  // Google groupé par tier
+  const ggroups = getGoogleVoicesByTier();
+  const tierLabels = { std: 'Standard', wn: 'WaveNet', n2: 'Neural2', c3hd: 'Chirp3-HD 💎' };
+  let googleOpts = '<option value="">— Choisir —</option>';
+  for (const tier of ['std','wn','n2','c3hd']) {
+    if (ggroups[tier].length === 0) continue;
+    googleOpts += `<optgroup label="${tierLabels[tier]}">`;
+    for (const v of ggroups[tier]) {
+      const sel = (v.name === selectedVoice) ? ' selected' : '';
+      googleOpts += `<option value="${v.name}"${sel}>${v.label} · ${v.gen}</option>`;
+    }
+    googleOpts += '</optgroup>';
+  }
+
+  // Piper
+  const piperList = getPiperVoicesList();
+  const piperOpts = buildVoiceOptions('piper', piperList);
+  const piperStatus = __piperAvailable === false
+    ? '<span style="color:#fbbf24;font-size:10px">⚠ serveur hors-ligne</span>'
+    : __piperAvailable === true ? '<span style="color:var(--green);font-size:10px">✅ en ligne</span>'
+    : '<span style="opacity:.5;font-size:10px">⏳…</span>';
+
+  // XTTS dynamiques
+  const xttsList = __xttsVoices.map(xv => ({
+    name: `xtts:${xv.name}`, label: xv.name, gen: '—'
+  }));
+  const xttsOpts = buildVoiceOptions('xtts', xttsList);
+  const xttsStatus = __xttsAvailable === false
+    ? '<span style="color:#fbbf24;font-size:10px">⚠ serveur hors-ligne</span>'
+    : __xttsAvailable === true ? `<span style="color:var(--green);font-size:10px">✅ ${__xttsVoices.length} voix clonée(s)</span>`
+    : '<span style="opacity:.5;font-size:10px">⏳…</span>';
+
+  // Kokoro dynamiques
+  const kokoroList = __kokoroVoices.map(kv => ({
+    name: `kokoro:${kv.name}`, label: kv.name,
+    gen: kv.gender === 'F' ? 'Femme' : kv.gender === 'M' ? 'Homme' : '—'
+  }));
+  const kokoroOpts = buildVoiceOptions('kokoro', kokoroList);
+  const kokoroStatus = __kokoroAvailable === false
+    ? '<span style="color:#fbbf24;font-size:10px">⚠ serveur hors-ligne · <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px">start_kokoro.bat</code></span>'
+    : __kokoroAvailable === true ? `<span style="color:var(--green);font-size:10px">✅ ${__kokoroVoices.length} voix FR</span>`
+    : '<span style="opacity:.5;font-size:10px">⏳…</span>';
+
+  const selectStyle = 'width:100%;padding:8px 10px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px;cursor:pointer';
+
+  wrap.innerHTML = `
+    <div style="font-size:12px;color:var(--ink-dim);margin-bottom:10px;font-weight:600">🎙 Sélection rapide par source</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <label style="font-size:11px;color:var(--ink-dim)">☁️ Google Cloud</label>
+        </div>
+        <select id="ddGoogle" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)">${googleOpts}</select>
+      </div>
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <label style="font-size:11px;color:var(--ink-dim)">🏠 Piper local</label>
+          ${piperStatus}
+        </div>
+        <select id="ddPiper" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__piperAvailable === false ? 'disabled' : ''}>${piperOpts}</select>
+      </div>
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <label style="font-size:11px;color:var(--ink-dim)">💜 XTTS-v2 (voice clone)</label>
+          ${xttsStatus}
+        </div>
+        <select id="ddXtts" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__xttsAvailable === false ? 'disabled' : ''}>${xttsOpts}</select>
+      </div>
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <label style="font-size:11px;color:var(--ink-dim)">🌸 Kokoro (ONNX)</label>
+          ${kokoroStatus}
+        </div>
+        <select id="ddKokoro" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__kokoroAvailable === false ? 'disabled' : ''}>${kokoroOpts}</select>
+      </div>
+    </div>
+    <div style="font-size:10px;color:var(--ink-dim);margin-top:8px;opacity:.7">Voix actuellement choisie : <strong style="color:var(--ink)">${selectedVoice || '—'}</strong></div>
+  `;
+  return wrap;
+}
+
+// Callback dropdown : applique la voix choisie + rafraîchit l'UI
+function selectVoiceFromDropdown(name) {
+  if (!name) return;
+  selectedVoice = name;
+  localStorage.setItem('epubson_voice', name);
+  buildVoiceGrid();
+  updateCostEstimate && updateCostEstimate();
+  refreshCachePanel && refreshCachePanel();
+  refreshQuotaPanel && refreshQuotaPanel();
+}
+
 function buildVoiceGrid() {
   const grid = document.getElementById('voiceGrid');
   grid.innerHTML = '';
+  // Panneau dropdowns par source (sélection rapide)
+  grid.appendChild(buildSourceDropdowns());
   // Bandeau de verrouillage premium
   const unlocked = isPremiumUnlocked();
   const banner = document.createElement('div');
@@ -3532,13 +3680,102 @@ async function piperTTS(ssml, retries = 3) {
   }
 }
 
-// Dispatcher principal — Google / Piper / XTTS selon la voix sélectionnée
+// ─── Kokoro TTS ─────────────────────────────────────────────────────
+async function kokoroHealthCheck() {
+  if (__kokoroAvailable !== null) return __kokoroAvailable;
+  try {
+    const r = await fetch(`${KOKORO_SERVER_URL}/health`, { method:'GET' });
+    if (r.ok) {
+      const data = await r.json();
+      __kokoroVoices = data.voices || [];
+      __kokoroAvailable = true;
+      console.log('[Kokoro] serveur OK ·', __kokoroVoices.length, 'voix FR');
+    } else {
+      __kokoroAvailable = false;
+    }
+  } catch (_) {
+    __kokoroAvailable = false;
+  }
+  return __kokoroAvailable;
+}
+
+async function kokoroLoadVoices() {
+  try {
+    const r = await fetch(`${KOKORO_SERVER_URL}/voices`);
+    if (r.ok) {
+      const data = await r.json();
+      __kokoroVoices = data.voices || [];
+    }
+  } catch (_) {}
+  return __kokoroVoices;
+}
+
+async function shutdownKokoroServer(btn) {
+  if (btn) btn.disabled = true;
+  try { await fetch(`${KOKORO_SERVER_URL}/shutdown`, { method:'POST' }); } catch(_) {}
+  __kokoroAvailable = null;
+  __kokoroVoices = [];
+  if (btn) btn.disabled = false;
+  buildVoiceGrid && buildVoiceGrid();
+}
+
+async function kokoroTTS(ssml, retries = 3) {
+  const voice = getVoiceObj(selectedVoice);
+  if (!voice || voice.backend !== 'kokoro') throw new Error('Voix non Kokoro');
+  const text = stripSSMLForPiper(ssml);  // strip SSML, Kokoro veut du plain text
+  if (!text) throw new Error('Texte vide après strip SSML');
+
+  const cacheHash = await ttsCacheKey(text, selectedVoice, { backend:'kokoro' });
+  const cached = await ttsCacheGet(cacheHash);
+  if (cached && cached.audio) {
+    __ttsCacheStats.hits++;
+    __ttsCacheStats.savedChars += cached.chars || text.length;
+    return cached.audio;
+  }
+  __ttsCacheStats.misses++;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const r = await fetch(`${KOKORO_SERVER_URL}/tts`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          text,
+          voice: voice.kokoroVoice,
+          language: 'fr-fr',
+          speed: 1.0,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.text();
+        throw new Error(`Kokoro ${r.status} : ${err}`);
+      }
+      const audioBuffer = await r.arrayBuffer();
+      await ttsCachePut(cacheHash, audioBuffer, text.length, selectedVoice);
+      return audioBuffer;
+    } catch (e) {
+      if (aborted) throw new Error('Aborted');
+      if (attempt === retries - 1) {
+        if (e.message?.includes('Failed to fetch')) {
+          throw new Error("Serveur Kokoro inaccessible. Lance start_kokoro.bat dans un terminal.");
+        }
+        throw e;
+      }
+      await sleep(1000 * (attempt + 1));
+    }
+  }
+}
+
+// Dispatcher principal — Google / Piper / XTTS / Kokoro selon la voix sélectionnée
 async function synthesize(ssml, retries) {
   if (isXttsVoice(selectedVoice)) {
     return await xttsTTS(ssml, Math.min(retries || 3, 3));
   }
   if (isPiperVoice(selectedVoice)) {
     return await piperTTS(ssml, Math.min(retries || 3, 3));
+  }
+  if (isKokoroVoice(selectedVoice)) {
+    return await kokoroTTS(ssml, Math.min(retries || 3, 3));
   }
   return await googleTTS(ssml, retries);
 }
