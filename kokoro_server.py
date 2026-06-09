@@ -152,14 +152,26 @@ def sanitize_text(text):
     """
     # Mono-ligne : tout whitespace -> espace simple
     text = re.sub(r'\s+', ' ', text)
-    # Normalise typographie française
-    text = text.replace('‘', "'").replace('’', "'")  # apostrophes courbes
-    text = text.replace('“', '"').replace('”', '"')  # guillemets courbes
-    text = text.replace('«', '"').replace('»', '"')  # guillemets francais
-    text = text.replace('—', ' - ').replace('–', ' - ')  # em/en dash
-    text = text.replace('…', '...')  # ellipsis
+    # Normalise apostrophes courbes -> droite (préserve les élisions)
+    text = text.replace('‘', "'").replace('’', "'")
+    # CRITIQUE : em-dash/en-dash -> point. espeak interprète " - " comme
+    # marqueur de liste et décale les phonèmes ("mots prononcés plus loin
+    # dans le texte"). Le point force une frontière de phrase nette.
+    text = text.replace('—', '. ').replace('–', '. ')
+    # Guillemets -> rien (sinon espeak dit "ouvrir guillemets")
+    text = text.replace('“', '').replace('”', '')
+    text = text.replace('«', '').replace('»', '')
+    text = text.replace('"', '')
+    # Placeholder ellipsis pour la préserver pendant le collapse
+    text = text.replace('…', '\x01')
     # Supprime caractères invisibles
     text = INVISIBLE_CHARS_RE.sub('', text)
+    # Collapse les ".  ." (créés par em-dash juxtaposé à ponctuation) en "."
+    text = re.sub(r'\.\s*\.', '.', text)
+    # Restaure ellipsis comme "..."
+    text = text.replace('\x01', '...')
+    # Collapse doubles espaces résiduels
+    text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 
