@@ -204,9 +204,11 @@ def sanitize_text(text):
     text = re.sub(r'\s*[»”]\s*', ' , ', text)  # fermants
     text = text.replace('"', ' , ')
 
-    # Ellipsis : conserver comme "..." (espeak la fait sonner comme
-    # une pause dramatique allongée — naturelle pour la narration).
-    text = text.replace('…', '...')
+    # Ellipsis : on la convertit en placeholder pour qu'elle survive
+    # à la transformation virgule->point en aval (sinon "..." serait
+    # collapsé en "."). Restauration à la toute fin.
+    ELLIPSIS_PH = '\x02'
+    text = text.replace('…', ELLIPSIS_PH)
 
     # Supprime caractères invisibles
     text = INVISIBLE_CHARS_RE.sub('', text)
@@ -224,16 +226,30 @@ def sanitize_text(text):
     # Trim espace avant ponctuation
     text = re.sub(r'\s+([,.!?;:])', r'\1', text)
 
-    # ── RENFORCEMENT INTONATION INTERROGATIVE ────────────────────────
-    # espeak-ng FR a une intonation montante très faible sur '?' isolé.
-    # Chaque '?' supplémentaire amplifie la modulation pitch montante :
-    #   ?    = espeak natif (faible)
-    #   ??   = ~+50% pitch montant
-    #   ???  = ~+70% pitch montant (réglage utilisateur actuel)
-    # On n'applique qu'aux phrases interrogatives normales, pas aux '?!'
-    # ou '??' déjà présents (sinon répétition incontrôlée).
-    text = re.sub(r'(?<![?!])\?(?![?!])', '???', text)
+    # ── INTONATION INTERROGATIVE (boost modéré) ───────────────────────
+    # '??' amplifie le pitch montant sur '?' final. On utilise PAS '???'
+    # car espeak étalerait la courbe interrogative sur toute la phrase,
+    # faisant remonter le ton sur les virgules internes (non voulu).
+    text = re.sub(r'(?<![?!])\?(?![?!])', '??', text)
 
+    # ── INTONATION DESCENDANTE AVANT LES VIRGULES ─────────────────────
+    # Demande utilisateur : style narratif audiobook = ton descendant
+    # avant chaque pause virgule (comme avant un point), pas la légère
+    # montée par défaut d'espeak (courbe de continuation).
+    # Solution simple et robuste : remplacer ',' par '.'. espeak appliquera
+    # alors sa courbe DÉCLARATIVE (chute tonale finale) avant la pause.
+    # Compromis assumé : pause plus longue, rythme plus segmenté.
+    text = re.sub(r'\s*,\s*', '. ', text)
+    # Collapse '..' / '. .' éventuels (le placeholder ellipsis n'est PAS
+    # affecté car c'est un char \x02, pas un point)
+    text = re.sub(r'\.\s*\.+', '.', text)
+
+    # Collapse espaces et trim
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'\s+([.!?;:])', r'\1', text)
+
+    # Restaure ellipsis (pause dramatique préservée)
+    text = text.replace(ELLIPSIS_PH, '...')
     return text.strip()
 
 
