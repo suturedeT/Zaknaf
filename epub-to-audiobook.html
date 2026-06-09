@@ -594,7 +594,10 @@ header {
   <div id="progressPanel">
     <div class="prog-header">
       <div class="prog-title">Conversion en cours</div>
-      <div class="prog-pct" id="progPct">0%</div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <div id="convTimer" style="font-size:13px;color:var(--ink-dim);font-variant-numeric:tabular-nums">⏱ 0s</div>
+        <div class="prog-pct" id="progPct">0%</div>
+      </div>
     </div>
     <div class="prog-bar-wrap"><div class="prog-bar" id="progBar"></div></div>
     <div class="prog-sub" id="progSub">Initialisation…</div>
@@ -2292,6 +2295,7 @@ async function startConversion() {
     const { book, selectedChapters } = booksToProcess[bookIdx];
 
     log(`📚 Livre ${bookIdx+1}/${booksToProcess.length} : ${book.title}`,'hi');
+    startConversionTimer();
 
     // Pour compatibilité avec les fonctions qui lisent bookMeta global
     bookMeta = book;
@@ -2540,8 +2544,11 @@ async function startConversion() {
   const sizeMB   = (m4bBlob.size/1024/1024).toFixed(1);
   const durMin   = Math.round(elapsedMs/60000);
 
-  log(`✓ Livre ${bookIdx+1}/${booksToProcess.length} prêt — ${sizeMB} Mo (~${durMin} min)`,'ok');
-  allResults.push({ url, title: book.title, sizeMB, durMin, ext:'m4b' });
+  const convElapsedMs = Date.now() - __bookStartMs;
+  stopConversionTimer();
+  const convStr = formatElapsed(convElapsedMs);
+  log(`✓ Livre ${bookIdx+1}/${booksToProcess.length} prêt — ${sizeMB} Mo · ${durMin} min audio · ⏱ ${convStr} de conversion`,'ok');
+  allResults.push({ url, title: book.title, sizeMB, durMin, convElapsedMs, ext:'m4b' });
   grandTotalSentences += totalSentences;
   } // fin de la boucle externe sur les livres
 
@@ -4296,6 +4303,40 @@ function setPhase(idx, state) {
 function setPhaseDetail(idx, txt) { document.getElementById(`ph${idx}d`).textContent = txt; }
 function setPhaseBar(idx, pct)    { document.getElementById(`ph${idx}b`).style.width = pct + '%'; }
 
+// Horodatage de conversion du livre courant (mis à jour à chaque itération
+// de la boucle externe). Sert au timer live et au total final.
+let __bookStartMs = 0;
+let __conversionTimerInterval = null;
+
+function formatElapsed(ms) {
+  if (ms < 0) ms = 0;
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2,'0')}s`;
+  return `${sec}s`;
+}
+
+function startConversionTimer() {
+  __bookStartMs = Date.now();
+  stopConversionTimer();
+  __conversionTimerInterval = setInterval(() => {
+    const el = document.getElementById('convTimer');
+    if (el) el.textContent = '⏱ ' + formatElapsed(Date.now() - __bookStartMs);
+  }, 1000);
+  const el = document.getElementById('convTimer');
+  if (el) el.textContent = '⏱ 0s';
+}
+
+function stopConversionTimer() {
+  if (__conversionTimerInterval) {
+    clearInterval(__conversionTimerInterval);
+    __conversionTimerInterval = null;
+  }
+}
+
 function updateGlobal(ratio, label) {
   const pct = Math.round(ratio * 100);
   document.getElementById('progPct').textContent = pct + '%';
@@ -4317,17 +4358,23 @@ function showResult(files, bookTitle, sentenceCount) {
   const panel = document.getElementById('resultPanel');
   panel.style.display = 'block'; panel.classList.add('fade-in');
 
-  const totalMin  = files.reduce((a,f) => a + f.durMin, 0);
-  const totalSize = files.reduce((a,f) => a + parseFloat(f.sizeMB), 0).toFixed(1);
+  const totalMin     = files.reduce((a,f) => a + f.durMin, 0);
+  const totalSize    = files.reduce((a,f) => a + parseFloat(f.sizeMB), 0).toFixed(1);
+  const totalConvMs  = files.reduce((a,f) => a + (f.convElapsedMs || 0), 0);
+  const totalConvStr = totalConvMs > 0 ? formatElapsed(totalConvMs) : '';
 
   const isSingle = files.length === 1;
   const fmt = isSingle
     ? `${(files[0].ext||'wav').toUpperCase()} · livre audio complet · chapitres intégrés`
     : `${files.length} fichiers WAV numérotés`;
 
+  const convLine = totalConvStr
+    ? `<br><span style="color:var(--ink-dim);font-size:11px">⏱ Conversion : ${totalConvStr}${files.length > 1 ? ' (total)' : ''}</span>`
+    : '';
+
   document.getElementById('resultDesc').innerHTML =
     `<strong>${bookTitle}</strong><br>${sentenceCount.toLocaleString('fr')} blocs · ${totalMin} min · ${totalSize} Mo<br>
-    <span style="color:var(--ink-dim);font-size:11px">Voix ${selectedVoice} · ${isChirp3(selectedVoice)?'Google Chirp3-HD':'Google Neural2'} · ${fmt}</span>`;
+    <span style="color:var(--ink-dim);font-size:11px">Voix ${selectedVoice} · ${isChirp3(selectedVoice)?'Google Chirp3-HD':'Google Neural2'} · ${fmt}</span>${convLine}`;
 
   const btns = document.getElementById('downloadBtns');
   btns.innerHTML = '';
@@ -4368,6 +4415,7 @@ function onAbort() {
   document.getElementById('actionRow').style.display = 'flex';
   log('✕ Conversion annulée par l\'utilisateur','err');
   updateGlobal(0, 'Annulé');
+  stopConversionTimer();
   releaseWakeLock();
 }
 
