@@ -184,24 +184,45 @@ def sanitize_text(text):
     text = re.sub(r'\s+', ' ', text)
     # Normalise apostrophes courbes -> droite (préserve les élisions)
     text = text.replace('‘', "'").replace('’', "'")
-    # CRITIQUE : em-dash/en-dash -> point. espeak interprète " - " comme
-    # marqueur de liste et décale les phonèmes ("mots prononcés plus loin
-    # dans le texte"). Le point force une frontière de phrase nette.
-    text = text.replace('—', '. ').replace('–', '. ')
-    # Guillemets -> rien (sinon espeak dit "ouvrir guillemets")
-    text = text.replace('“', '').replace('”', '')
-    text = text.replace('«', '').replace('»', '')
-    text = text.replace('"', '')
-    # Placeholder ellipsis pour la préserver pendant le collapse
-    text = text.replace('…', '\x01')
+
+    # ── INTONATION : transformation des marqueurs typographiques en
+    #    ponctuation prosodique que espeak/Kokoro respectent.
+    #
+    # Em-dash / en-dash : usage français = incise OU début de dialogue.
+    # - Incise "Il sortit — comme prévu — sans bruit" :
+    #     virgule = pause courte qui préserve la continuité de phrase.
+    # - Dialogue "— Bonjour, dit-il" en début de ligne :
+    #     virgule reste correct (légère pause avant la prise de parole).
+    # On utilise " , " avec espaces pour que espeak la traite comme
+    # ponctuation séparée (pas attachée au mot précédent).
+    text = re.sub(r'\s*[—–]\s*', ' , ', text)
+
+    # Guillemets : ouverture/fermeture = pause de dialogue. Remplacer
+    # par virgule + espace pour signaler une transition prosodique
+    # sans que espeak lise "ouvrir/fermer guillemets".
+    text = re.sub(r'\s*[«“]\s*', ' , ', text)  # ouvrants
+    text = re.sub(r'\s*[»”]\s*', ' , ', text)  # fermants
+    text = text.replace('"', ' , ')
+
+    # Ellipsis : conserver comme "..." (espeak la fait sonner comme
+    # une pause dramatique allongée — naturelle pour la narration).
+    text = text.replace('…', '...')
+
     # Supprime caractères invisibles
     text = INVISIBLE_CHARS_RE.sub('', text)
-    # Collapse les ".  ." (créés par em-dash juxtaposé à ponctuation) en "."
-    text = re.sub(r'\.\s*\.', '.', text)
-    # Restaure ellipsis comme "..."
-    text = text.replace('\x01', '...')
+
+    # Nettoyage : supprime virgules adjacentes (" , , ") créées par
+    # juxtaposition de typographies, garde une seule.
+    text = re.sub(r'\s*,(\s*,)+\s*', ', ', text)
+    # Virgule immédiatement après une ponctuation forte est inutile :
+    # ". ," -> ".", "! ," -> "!", "? ," -> "?"
+    text = re.sub(r'([.!?])\s*,\s*', r'\1 ', text)
+    # Virgule juste avant ponctuation forte : ", ." -> "."
+    text = re.sub(r'\s*,\s*([.!?])', r'\1', text)
     # Collapse doubles espaces résiduels
     text = re.sub(r'\s+', ' ', text)
+    # Trim espace avant ponctuation
+    text = re.sub(r'\s+([,.!?;:])', r'\1', text)
     return text.strip()
 
 
