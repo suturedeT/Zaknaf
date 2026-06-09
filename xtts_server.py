@@ -77,6 +77,7 @@ PERFORMANCE
   - CPU moderne (8 coeurs)   : ~10-30x temps réel (lent mais OK)
   - 1 minute audio générée en : 1-2 min (GPU) / 10-30 min (CPU)
 """
+import gc
 import io
 import os
 import re
@@ -276,6 +277,14 @@ def synth():
             'available': [v['name'] for v in list_voices()],
         }), 404
 
+    # Guard mémoire : XTTS-v2 plafonne à ~250 tokens/lang. Texte trop long → OOM.
+    MAX_TEXT_LEN = 400
+    if len(text) > MAX_TEXT_LEN:
+        return jsonify({
+            'error': f'texte trop long ({len(text)} chars > {MAX_TEXT_LEN})',
+            'hint': 'split the text into smaller chunks before sending',
+        }), 413
+
     try:
         # split_sentences=True : XTTS découpe sur la ponctuation → meilleure prosodie
         audio = tts.tts(
@@ -285,6 +294,8 @@ def synth():
             speed=speed,
             split_sentences=True,
         )
+        # Libère la mémoire allouée (XTTS-v2 fuit sur CPU sans ça)
+        gc.collect()
         if isinstance(audio, list):
             audio = np.array(audio, dtype=np.float32)
         # Normalise et convertit en int16
@@ -300,7 +311,23 @@ def synth():
         buf.seek(0)
         return send_file(buf, mimetype='audio/wav',
                          as_attachment=False, download_name='xtts.wav')
+    except RuntimeError as e:
+        # OOM ou échec d'allocation mémoire : on libère et on signale clairement
+        gc.collect()
+        msg = str(e)
+        if 'alloc' in msg.lower() or 'memory' in msg.lower() or 'enforce fail' in msg.lower():
+            print(f"  ✗ OOM mémoire : {msg[:200]}")
+            return jsonify({
+                'error': 'OOM',
+                'detail': msg[:500],
+                'hint': 'reduce batch size or text length',
+            }), 503
+        print(f"  ✗ Erreur synthèse : {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
     except Exception as e:
+        gc.collect()
         print(f"  ✗ Erreur synthèse : {e}")
         import traceback
         traceback.print_exc()

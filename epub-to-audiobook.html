@@ -2225,33 +2225,63 @@ async function startConversion() {
     const piperBatch = isPiperVoice(selectedVoice) && getPiperParams().batch_sentences;
     const xttsBatch  = isXttsVoice(selectedVoice)  && getXttsParams().batch_sentences;
     const localBatch = piperBatch || xttsBatch;
-    const PIPER_BATCH_SIZE = piperBatch ? 4 : 3;  // XTTS plus prudent (limite 250 tokens/lang)
+    const PIPER_BATCH_SIZE = piperBatch ? 4 : 2;  // XTTS-v2 plafond ~250 tokens → 2 phrases max sûr
+    const XTTS_BATCH_MAX_CHARS = 400;  // garde-fou en plus du nb de phrases
     if (localBatch) {
       const tag = piperBatch ? '🟡 Piper' : '💜 XTTS';
       const ttsName = piperBatch ? 'Piper-batch' : 'XTTS-batch';
       log(`${tag} batch activé (${PIPER_BATCH_SIZE} phrases/lot)`, 'hi');
-      for (let i = 0; i < total; i += PIPER_BATCH_SIZE) {
+      let i = 0;
+      while (i < total) {
         if (aborted) { onAbort(); return; }
         const chunkIdxs = [];
         const chunkTexts = [];
+        let charsAccum = 0;
         for (let k = i; k < Math.min(i + PIPER_BATCH_SIZE, total); k++) {
+          // Garde-fou XTTS : si l'ajout dépasse 400 chars, on coupe le batch
+          if (xttsBatch && charsAccum + sentences[k].text.length > XTTS_BATCH_MAX_CHARS && chunkIdxs.length > 0) break;
           chunkIdxs.push(k);
           chunkTexts.push(sentences[k].text);
+          charsAccum += sentences[k].text.length;
+        }
+        // Si la 1ère phrase à elle seule fait > 400 chars, on l'envoie quand même seule (split_sentences=True s'en occupera)
+        if (chunkIdxs.length === 0) {
+          chunkIdxs.push(i);
+          chunkTexts.push(sentences[i].text);
         }
         const combined = chunkTexts.join(' ');
         const ssml = `<speak>${escapeXml(combined)}</speak>`;
+        let success = false;
         try {
           const audio = await synthesize(ssml);
           // Assigne le WAV au PREMIER index ; les suivants restent vides (skip Phase 2)
           mp3Map[chunkIdxs[0]] = audio;
           for (let k = 1; k < chunkIdxs.length; k++) mp3Map[chunkIdxs[k]] = null;
+          success = true;
         } catch (e) {
-          log(`✗ Batch ${i} : ${e.message}`, 'err');
+          // Si OOM/503 ou batch trop gros (413) : retry phrase par phrase
+          const isMemErr = /OOM|503|413|alloc|memory|enforce fail/i.test(e.message);
+          if (isMemErr && chunkIdxs.length > 1) {
+            log(`⚠ Batch ${i} OOM → fallback individuel ${chunkIdxs.length} phrases`, 'err');
+            for (const idx of chunkIdxs) {
+              if (aborted) { onAbort(); return; }
+              try {
+                const single = `<speak>${escapeXml(sentences[idx].text)}</speak>`;
+                mp3Map[idx] = await synthesize(single);
+              } catch (e2) {
+                log(`  ✗ Phrase ${idx} : ${e2.message}`, 'err');
+              }
+            }
+            success = true;
+          } else {
+            log(`✗ Batch ${i} : ${e.message}`, 'err');
+          }
         }
         ttsDone += chunkIdxs.length;
         setPhaseBar(1, ttsDone/total*100);
         setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — batch ${ttsDone}/${total}`);
         updateGlobal(gBase + gSlice*(0.30 + ttsDone/total*0.40), `Ch.${ci+1} TTS ${ttsName}`);
+        i += chunkIdxs.length;
       }
     } else {
       for (let i = 0; i < total; i += CONCURRENCY) {
