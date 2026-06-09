@@ -22,12 +22,12 @@ INSTALLATION (une seule fois)
        b) Voices embeddings (~27 Mo) :
           https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 
-     → Place les deux dans :
+     -> Place les deux dans :
        Zaknaf/
-         ├── kokoro_server.py
-         └── models/
-             ├── kokoro-v1.0.onnx
-             └── voices-v1.0.bin
+         |-- kokoro_server.py
+         `-- models/
+             |-- kokoro-v1.0.onnx
+             `-- voices-v1.0.bin
 
 ────────────────────────────────────────────────────────────────────────
 USAGE
@@ -47,16 +47,7 @@ VOIX FR
   Kokoro v1.0 contient une voix française native :
     - ff_siwis  : féminine, claire, dataset Siwis (~10h FR)
 
-  Toutes les voix EN/etc sont aussi dispos si tu veux multilingue,
-  mais ce serveur filtre sur les voix FR par défaut.
-
 ────────────────────────────────────────────────────────────────────────
-PERFORMANCE
-────────────────────────────────────────────────────────────────────────
-
-  Modèle 82M params + ONNX runtime CPU :
-    ~3-5x temps réel sur CPU moderne (1 min audio en 12-20 s)
-    Bien plus rapide qu'XTTS-v2 (10-30x), pas de risque OOM.
 """
 import gc
 import io
@@ -81,14 +72,9 @@ MODEL_PATH = os.path.join(MODELS_DIR, 'kokoro-v1.0.onnx')
 VOICES_PATH = os.path.join(MODELS_DIR, 'voices-v1.0.bin')
 
 # Voix FR à exposer (les autres langues sont ignorées par défaut)
-# Préfixe codes Kokoro :
-#   ff_* = français féminin   fm_* = français masculin  (s'il y en a)
-#   af_* = anglais US féminin am_* = ...
-# Pour autoriser plus de voix (anglais etc.), édite cette liste.
 ALLOWED_PREFIXES = ('ff_', 'fm_')
 
-# Limite par requête. Kokoro tokenize en G2P → la limite est en tokens,
-# pas en chars. ~500 chars c'est large. Si besoin l'app split déjà côté client.
+# Limite par requête (chars source, avant phonemization)
 MAX_TEXT_LEN = 800
 
 # ── Imports lourds ────────────────────────────────────────────────────
@@ -96,50 +82,116 @@ try:
     from flask import Flask, request, send_file, jsonify
     from flask_cors import CORS
 except ImportError:
-    print("✗ Flask manquant : pip install flask flask-cors")
+    print("X Flask manquant : pip install flask flask-cors")
     sys.exit(1)
 
 try:
     from kokoro_onnx import Kokoro
 except ImportError:
-    print("✗ kokoro-onnx manquant. Lance :")
+    print("X kokoro-onnx manquant. Lance :")
     print("    pip install kokoro-onnx flask flask-cors soundfile")
     sys.exit(1)
 
 try:
     import numpy as np
 except ImportError:
-    print("✗ numpy manquant (devrait venir avec kokoro-onnx)")
+    print("X numpy manquant (devrait venir avec kokoro-onnx)")
     sys.exit(1)
+
+
+# ── Liaisons françaises (même logique que piper_server.py) ──────────
+# espeak-ng (utilisé par Kokoro via phonemizer) ne fait PAS les liaisons FR
+# obligatoires. On insère un trait d'union → espeak fusionne les phonèmes.
+V = r'aeiouéèêëàâîïôöùûüœhAEIOUÉÈÊËÀÂÎÏÔÖÙÛÜŒH'
+LIAISON_RULES = [
+    (re.compile(rf'\b(les|des|mes|tes|ses|ces|nos|vos|leurs|aux|quelques|plusieurs)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    (re.compile(rf'\b(nous|vous|ils|elles|on)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    (re.compile(rf'\b(en|y)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    (re.compile(rf'\b(un|aucun|mon|ton|son|bon|moyen|certain)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    (re.compile(rf'\b(petit|petits|grand|grands|gros|haut|hauts|tout|tous|saint|vingt|cent|fort|forts|long|longs|premier|premiers|dernier|derniers)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    (re.compile(rf'\b(chez|sous|sans|dans|dès|pendant|avant|après|sauf|devant)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    (re.compile(rf'\b(est|sont|était|étaient|sera|seront|fait|fut|peut|veut|doit|prend|tient|vient|sait|dit|met|paraît)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    (re.compile(rf'\b(mais|puis|donc|quand|trop|fort|bien|comment|combien|moins|plus)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+    (re.compile(rf'\b(ont|avons|avez|sommes|êtes)\s+([{V}])', re.IGNORECASE), r'\1-\2'),
+]
+H_ASPIRE = {'haricot','héros','hibou','hache','haie','haine','hâte','haut','hauteur',
+            'hall','halle','halte','hamac','hamster','hanche','handicap','hangar',
+            'harnais','harpe','hasard','hère','hérisson','hisser','hocher','homard',
+            'hongrois','honte','hotte','houblon','hublot','huit','hurler','hutte'}
+
+# Caractères Unicode invisibles à supprimer (zero-width, BOM, soft hyphen, marks)
+INVISIBLE_CHARS_RE = re.compile(
+    '[' + ''.join([
+        '­',  # soft hyphen
+        '​',  # zero-width space
+        '‌',  # ZWNJ
+        '‍',  # ZWJ
+        '‎',  # LTR mark
+        '‏',  # RTL mark
+        '‪-‮',  # bidi controls
+        '⁠',  # word joiner
+        '﻿',  # BOM
+    ]) + ']'
+)
+
+
+def apply_french_liaisons(text):
+    for pattern, repl in LIAISON_RULES:
+        text = pattern.sub(repl, text)
+    for h in H_ASPIRE:
+        text = re.sub(rf'-({h[0]}{h[1:]})', r' \1', text, flags=re.IGNORECASE)
+    return text
+
+
+def sanitize_text(text):
+    """Nettoie le texte pour éviter les bugs phonemizer (input/output mismatch).
+
+    Cause connue : espeak-ng compte différemment les "lignes" entrée/sortie
+    quand le texte contient des sauts de ligne, doubles espaces, ou certains
+    caractères Unicode. On force un texte mono-ligne propre.
+    """
+    # Mono-ligne : tout whitespace -> espace simple
+    text = re.sub(r'\s+', ' ', text)
+    # Normalise typographie française
+    text = text.replace('‘', "'").replace('’', "'")  # apostrophes courbes
+    text = text.replace('“', '"').replace('”', '"')  # guillemets courbes
+    text = text.replace('«', '"').replace('»', '"')  # guillemets francais
+    text = text.replace('—', ' - ').replace('–', ' - ')  # em/en dash
+    text = text.replace('…', '...')  # ellipsis
+    # Supprime caractères invisibles
+    text = INVISIBLE_CHARS_RE.sub('', text)
+    return text.strip()
+
+
+def split_into_sentences(text):
+    """Découpe sur ponctuation forte pour fallback. Renvoie liste de fragments."""
+    parts = re.split(r'(?<=[.!?])\s+', text)
+    return [p.strip() for p in parts if p.strip()]
 
 
 # ── Vérif des fichiers modèle ────────────────────────────────────────
-print("─" * 60)
-print(" Kokoro TTS server pour ÉpubSon")
-print("─" * 60)
+print("-" * 60)
+print(" Kokoro TTS server pour EpubSon")
+print("-" * 60)
 
 if not os.path.isfile(MODEL_PATH):
-    print(f"\n✗ Modèle introuvable : {MODEL_PATH}")
-    print(f"\n  Télécharge :")
-    print(f"    https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx")
-    print(f"  → place-le dans le dossier 'models/'.")
+    print(f"\nX Modèle introuvable : {MODEL_PATH}")
+    print(f"  Télécharge kokoro-v1.0.onnx dans models/")
     sys.exit(1)
 
 if not os.path.isfile(VOICES_PATH):
-    print(f"\n✗ Voices file introuvable : {VOICES_PATH}")
-    print(f"\n  Télécharge :")
-    print(f"    https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin")
-    print(f"  → place-le dans le dossier 'models/'.")
+    print(f"\nX Voices file introuvable : {VOICES_PATH}")
+    print(f"  Télécharge voices-v1.0.bin dans models/")
     sys.exit(1)
 
 print(f"  Modèle  : {os.path.basename(MODEL_PATH)} ({os.path.getsize(MODEL_PATH) // (1024*1024)} Mo)")
 print(f"  Voices  : {os.path.basename(VOICES_PATH)} ({os.path.getsize(VOICES_PATH) // (1024*1024)} Mo)")
-print(f"  Chargement en cours…", flush=True)
+print(f"  Chargement en cours...", flush=True)
 
 try:
     kokoro = Kokoro(MODEL_PATH, VOICES_PATH)
 except Exception as e:
-    print(f"\n✗ Erreur de chargement : {e}")
+    print(f"\nX Erreur de chargement : {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
@@ -160,13 +212,9 @@ def list_available_voices():
 
 
 voices = list_available_voices()
-print(f"  ✓ Kokoro prêt — {len(voices)} voix FR détectée(s)")
+print(f"  OK Kokoro pret -- {len(voices)} voix FR detectee(s)")
 for v in voices:
-    print(f"     • {v['name']} ({v['gender']})")
-
-if not voices:
-    print(f"\n⚠ Aucune voix FR trouvée. La voix 'ff_siwis' devrait exister.")
-    print(f"  Vérifie que le fichier voices-v1.0.bin est à jour.")
+    print(f"     - {v['name']} ({v['gender']})")
 
 
 # ── Init Flask + CORS ─────────────────────────────────────────────────
@@ -176,7 +224,6 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.after_request
 def add_pna_header(response):
-    # Chrome 117+ Private Network Access
     response.headers['Access-Control-Allow-Private-Network'] = 'true'
     return response
 
@@ -195,19 +242,86 @@ def voices_endpoint():
     return jsonify({'voices': list_available_voices()})
 
 
+def synth_one(text, voice, speed, lang):
+    """Synthétise UN fragment, propage l'exception phonemizer si besoin."""
+    samples, sr = kokoro.create(text, voice=voice, speed=speed, lang=lang)
+    return samples, sr
+
+
+def synth_with_fallback(text, voice, speed, lang):
+    """Synthèse robuste : essaye d'un coup, sinon découpe en phrases et concat.
+
+    Le bug phonemizer 'lines mismatch' est aléatoire selon le texte. La parade
+    fiable est de découper en phrases plus courtes.
+    """
+    try:
+        return synth_one(text, voice, speed, lang)
+    except RuntimeError as e:
+        msg = str(e).lower()
+        if 'lines in input and output' not in msg and 'mismatch' not in msg:
+            raise
+        print(f"  ! phonemizer mismatch, fallback split phrases ({len(text)} chars)")
+
+    parts = split_into_sentences(text)
+    if len(parts) <= 1:
+        mid = len(text) // 2
+        space = text.rfind(' ', 0, mid + 30)
+        if space > 20:
+            parts = [text[:space].strip(), text[space:].strip()]
+        else:
+            raise RuntimeError("phonemizer mismatch sur texte insplittable")
+
+    audio_chunks = []
+    sr = None
+    for p in parts:
+        if not p:
+            continue
+        try:
+            s, this_sr = synth_one(p, voice, speed, lang)
+            audio_chunks.append(s)
+            sr = this_sr
+        except RuntimeError as e2:
+            if 'lines' in str(e2):
+                sub_parts = split_into_sentences(p)
+                if len(sub_parts) > 1:
+                    for sp in sub_parts:
+                        try:
+                            s, this_sr = synth_one(sp, voice, speed, lang)
+                            audio_chunks.append(s)
+                            sr = this_sr
+                        except Exception:
+                            print(f"     X sub-fragment dropped : {sp[:60]!r}")
+                else:
+                    print(f"     X fragment dropped : {p[:60]!r}")
+            else:
+                raise
+
+    if not audio_chunks:
+        raise RuntimeError("Tous les fragments ont echoue")
+
+    combined = np.concatenate(audio_chunks)
+    return combined, sr
+
+
 @app.route('/tts', methods=['POST', 'OPTIONS'])
 def synth():
     if request.method == 'OPTIONS':
         return ('', 204)
 
     data = request.get_json(force=True, silent=True) or {}
-    text = (data.get('text') or '').strip()
+    raw_text = (data.get('text') or '').strip()
     voice = data.get('voice') or 'ff_siwis'
     speed = float(data.get('speed', 1.0))
     lang = data.get('language', 'fr-fr')
+    apply_liaisons = data.get('apply_liaisons', True)
 
-    if not text:
+    if not raw_text:
         return jsonify({'error': 'text vide'}), 400
+
+    text = sanitize_text(raw_text)
+
+    if apply_liaisons and lang.startswith('fr'):
+        text = apply_french_liaisons(text)
 
     if len(text) > MAX_TEXT_LEN:
         return jsonify({
@@ -215,22 +329,18 @@ def synth():
             'hint': 'split avant envoi',
         }), 413
 
-    # Garde-fou voix
     available = [v['name'] for v in list_available_voices()]
     if voice not in available:
-        # Fallback sur la 1ère voix FR dispo
         if available:
             voice = available[0]
         else:
             return jsonify({'error': 'aucune voix FR disponible'}), 503
 
     try:
-        samples, sr = kokoro.create(text, voice=voice, speed=speed, lang=lang)
+        samples, sr = synth_with_fallback(text, voice, speed, lang)
         gc.collect()
 
-        # samples = np.array float32 [-1, 1]
         audio_i16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
-
         buf = io.BytesIO()
         with wave.open(buf, 'wb') as wav:
             wav.setnchannels(1)
@@ -243,8 +353,8 @@ def synth():
 
     except Exception as e:
         gc.collect()
-        print(f"  ✗ Erreur synthèse : {e}")
-        print(f"     text='{text[:120]}...'  voice={voice}  lang={lang}")
+        print(f"  X Erreur synthese : {e}")
+        print(f"     text={text[:150]!r}  voice={voice}  lang={lang}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -254,7 +364,7 @@ def synth():
 def shutdown():
     if request.method == 'OPTIONS':
         return ('', 204)
-    print("\n⏹ Arrêt demandé. Bye !")
+    print("\n[STOP] Arret demande. Bye !")
     import threading
     import time
 
@@ -269,7 +379,7 @@ def shutdown():
 @app.route('/', methods=['GET'])
 def root():
     return jsonify({
-        'service': 'Kokoro TTS server (ÉpubSon)',
+        'service': 'Kokoro TTS server (EpubSon)',
         'endpoints': ['/health', '/voices', '/tts', '/shutdown'],
         'voices_count': len(list_available_voices()),
     })
@@ -277,6 +387,6 @@ def root():
 
 if __name__ == '__main__':
     print()
-    print(f"✓ Serveur en écoute sur http://{HOST}:{PORT}\n")
-    print(f"  Ctrl+C pour arrêter.\n")
+    print(f"OK Serveur en ecoute sur http://{HOST}:{PORT}\n")
+    print(f"  Ctrl+C pour arreter.\n")
     app.run(host=HOST, port=PORT, debug=False, threaded=True)
