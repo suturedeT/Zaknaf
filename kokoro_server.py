@@ -226,11 +226,13 @@ def sanitize_text(text):
 
     # ── RENFORCEMENT INTONATION INTERROGATIVE ────────────────────────
     # espeak-ng FR a une intonation montante très faible sur '?' isolé.
-    # Astuce : doubler le '?' fait amplifier la modulation pitch montante
-    # par le générateur prosodique (effet "double interrogation"). On
-    # n'applique qu'aux phrases interrogatives normales, pas aux '?!'
-    # ou '??' déjà présents (sinon répétition).
-    text = re.sub(r'(?<![?!])\?(?![?!])', '??', text)
+    # Chaque '?' supplémentaire amplifie la modulation pitch montante :
+    #   ?    = espeak natif (faible)
+    #   ??   = ~+50% pitch montant
+    #   ???  = ~+70% pitch montant (réglage utilisateur actuel)
+    # On n'applique qu'aux phrases interrogatives normales, pas aux '?!'
+    # ou '??' déjà présents (sinon répétition incontrôlée).
+    text = re.sub(r'(?<![?!])\?(?![?!])', '???', text)
 
     return text.strip()
 
