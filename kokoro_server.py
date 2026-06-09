@@ -232,18 +232,16 @@ def sanitize_text(text):
     # faisant remonter le ton sur les virgules internes (non voulu).
     text = re.sub(r'(?<![?!])\?(?![?!])', '??', text)
 
-    # ── INTONATION DESCENDANTE AVANT LES VIRGULES (boost +30%) ────────
-    # Demande utilisateur : style narratif audiobook = ton descendant
-    # avant chaque virgule, avec amplitude plus marquée.
+    # ── INTONATION DESCENDANTE AVANT LES VIRGULES (max) ───────────────
     # Niveaux espeak FR du plus doux au plus profond :
     #   ','        = montée légère (continuation)
     #   ';'        = chute légère
     #   '.'        = chute déclarative moyenne
-    #   '!'        = chute emphatique profonde (~+30% amplitude vs '.')
-    # On utilise '!' pour une descente plus marquée. espeak ne lit pas
-    # cela comme "exclamation parlée" car le mot suivant n'est pas en
-    # majuscule emphatique.
-    text = re.sub(r'\s*,\s*', '! ', text)
+    #   '!'        = chute emphatique profonde (+30% vs '.')
+    #   '!!'       = chute compoundée (+50% vs '.')
+    #   '!!!'      = saturation espeak (+70% vs '.', max audible)
+    # Demande utilisateur : amplitude maximale -> '!!!'.
+    text = re.sub(r'\s*,\s*', '!!! ', text)
     # Collapse '..' / '. .' éventuels (le placeholder ellipsis n'est PAS
     # affecté car c'est un char \x02, pas un point)
     text = re.sub(r'\.\s*\.+', '.', text)
