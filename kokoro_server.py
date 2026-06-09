@@ -232,14 +232,18 @@ def sanitize_text(text):
     # faisant remonter le ton sur les virgules internes (non voulu).
     text = re.sub(r'(?<![?!])\?(?![?!])', '??', text)
 
-    # ── INTONATION DESCENDANTE AVANT LES VIRGULES ─────────────────────
+    # ── INTONATION DESCENDANTE AVANT LES VIRGULES (boost +30%) ────────
     # Demande utilisateur : style narratif audiobook = ton descendant
-    # avant chaque pause virgule (comme avant un point), pas la légère
-    # montée par défaut d'espeak (courbe de continuation).
-    # Solution simple et robuste : remplacer ',' par '.'. espeak appliquera
-    # alors sa courbe DÉCLARATIVE (chute tonale finale) avant la pause.
-    # Compromis assumé : pause plus longue, rythme plus segmenté.
-    text = re.sub(r'\s*,\s*', '. ', text)
+    # avant chaque virgule, avec amplitude plus marquée.
+    # Niveaux espeak FR du plus doux au plus profond :
+    #   ','        = montée légère (continuation)
+    #   ';'        = chute légère
+    #   '.'        = chute déclarative moyenne
+    #   '!'        = chute emphatique profonde (~+30% amplitude vs '.')
+    # On utilise '!' pour une descente plus marquée. espeak ne lit pas
+    # cela comme "exclamation parlée" car le mot suivant n'est pas en
+    # majuscule emphatique.
+    text = re.sub(r'\s*,\s*', '! ', text)
     # Collapse '..' / '. .' éventuels (le placeholder ellipsis n'est PAS
     # affecté car c'est un char \x02, pas un point)
     text = re.sub(r'\.\s*\.+', '.', text)
