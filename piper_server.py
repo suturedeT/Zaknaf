@@ -78,8 +78,7 @@ PORT = 5005
 # Voix à charger au démarrage. Ajoute ici si tu télécharges d'autres modèles.
 # Note : fr_FR-upmc-medium est multi-locuteur (jessica=0, pierre=1).
 VOICE_NAMES = [
-    'fr_FR-upmc-medium',   # jessica (F) + pierre (M grave)
-    'fr_FR-tom-medium',    # Tom M — voix masculine + douce que pierre
+    'fr_FR-upmc-medium',
 ]
 
 # ── Liaisons françaises forcées ───────────────────────────────────────

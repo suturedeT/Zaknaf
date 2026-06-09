@@ -285,9 +285,6 @@ def synth():
 
     # Paramètres XTTS-v2 (defaults orientés naturel)
     speed = float(data.get('speed', 1.0))   # 0.7 = lent expressif, 1.3 = rapide
-    # Pitch shift en demi-tons : +2/+3 = voix moins grave (sample masculin grave
-    # rendu + clair), -2 = voix plus grave. 0 = inchangé. Range raisonnable -6 à +6.
-    pitch_shift = float(data.get('pitch_shift', 0.0))
 
     if not text:
         return jsonify({'error': 'text vide'}), 400
@@ -341,17 +338,6 @@ def synth():
             }), 503
         # Reset streak on success
         __error_streak = 0
-        # Pitch shift via librosa si demandé (≠ 0)
-        if abs(pitch_shift) > 0.05:
-            try:
-                import librosa
-                audio = librosa.effects.pitch_shift(
-                    y=audio.astype(np.float32),
-                    sr=XTTS_SR,
-                    n_steps=pitch_shift,
-                )
-            except Exception as e:
-                print(f"  ⚠ pitch_shift {pitch_shift} échoué : {e}")
         # Normalise et convertit en int16
         audio = np.clip(audio, -1.0, 1.0)
         audio_i16 = (audio * 32767).astype(np.int16)
