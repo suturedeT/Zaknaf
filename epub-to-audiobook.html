@@ -772,9 +772,17 @@ const VOICES = [
   { name:'fr-FR-Chirp3-HD-Fenrir',       label:'Fenrir',   gen:'Homme', type:'c3hd', desc:'Chirp3 · expressif' },
   { name:'fr-FR-Chirp3-HD-Puck',         label:'Puck',     gen:'Homme', type:'c3hd', desc:'Chirp3 · dynamique' },
   // ── Piper (local, gratuit) — nécessite piper_server.py lancé ─────────────
-  { name:'piper:fr_FR-upmc-medium:0',   label:'Jessica (Piper)', gen:'Femme', type:'piper', desc:'Piper · UPMC · 100% local & gratuit',
+  // Voix féminines (du + clair au + grave)
+  { name:'piper:fr_FR-siwis-medium:0',  label:'Siwis (Piper)',    gen:'Femme', type:'piper', desc:'Piper · CSTR Siwis · douce & naturelle (recommandée)',
+    backend:'piper', pipModel:'fr_FR-siwis-medium', pipSpeakerId:0 },
+  { name:'piper:fr_FR-siwis-low:0',     label:'Siwis-Lite (Piper)',gen:'Femme', type:'piper', desc:'Piper · CSTR Siwis · version légère (28 Mo)',
+    backend:'piper', pipModel:'fr_FR-siwis-low', pipSpeakerId:0 },
+  { name:'piper:fr_FR-upmc-medium:0',   label:'Jessica (Piper)',  gen:'Femme', type:'piper', desc:'Piper · UPMC · académique',
     backend:'piper', pipModel:'fr_FR-upmc-medium', pipSpeakerId:0 },
-  { name:'piper:fr_FR-upmc-medium:1',   label:'Pierre (Piper)',  gen:'Homme', type:'piper', desc:'Piper · UPMC · 100% local & gratuit',
+  // Voix masculines (du + doux au + grave)
+  { name:'piper:fr_FR-tom-medium:0',    label:'Tom (Piper)',      gen:'Homme', type:'piper', desc:'Piper · Tom · masculine douce & claire',
+    backend:'piper', pipModel:'fr_FR-tom-medium', pipSpeakerId:0 },
+  { name:'piper:fr_FR-upmc-medium:1',   label:'Pierre (Piper)',   gen:'Homme', type:'piper', desc:'Piper · UPMC · grave & rocailleux',
     backend:'piper', pipModel:'fr_FR-upmc-medium', pipSpeakerId:1 },
 ];
 

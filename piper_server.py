@@ -78,7 +78,10 @@ PORT = 5005
 # Voix à charger au démarrage. Ajoute ici si tu télécharges d'autres modèles.
 # Note : fr_FR-upmc-medium est multi-locuteur (jessica=0, pierre=1).
 VOICE_NAMES = [
-    'fr_FR-upmc-medium',
+    'fr_FR-upmc-medium',   # jessica (F) + pierre (M grave/rocailleux)
+    'fr_FR-siwis-medium',  # Siwis F — voix CSTR, considérée la + naturelle FR Piper
+    'fr_FR-siwis-low',     # Siwis F — version légère 28 Mo, lecture + claire
+    'fr_FR-tom-medium',    # Tom M — voix masculine + douce que pierre
 ]
 
 # ── Liaisons françaises forcées ───────────────────────────────────────
