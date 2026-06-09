@@ -2776,7 +2776,7 @@ function normalizeFrenchText(s) {
 function forceSplitLongSentence(s, maxLen) {
   const parts = [];
   let remaining = s;
-  const seps = ['—', '–', '; ', ': ', ', '];
+  const seps = ['. ', '! ', '? ', '… ', '—', '–', '; ', ': ', ', '];
   while (remaining.length > maxLen) {
     let cutAt = -1;
     for (const sep of seps) {
@@ -3369,8 +3369,9 @@ function concatWavBuffers(buffers) {
   return out;
 }
 
-// Envoie 1 fragment à XTTS et retourne le WAV. Sans split ni cache.
-async function xttsTTSOne(text, voice, lang, speed, retries) {
+// Envoie 1 fragment à XTTS et retourne le WAV. Sur 422 (tokenizer
+// overflow après cleanup interne XTTS), re-split en 2 et concat récursif.
+async function xttsTTSOne(text, voice, lang, speed, retries, depth = 0) {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const r = await fetch(`${XTTS_SERVER_URL}/tts`, {
@@ -3388,8 +3389,22 @@ async function xttsTTSOne(text, voice, lang, speed, retries) {
             continue;
           }
         }
-        // 422 = tokenizer index error, inutile de retry
-        if (r.status === 422) throw new Error(`XTTS 422 tokenizer : ${err}`);
+        if (r.status === 422 && depth < 3 && text.length > 40) {
+          // Le cleaner XTTS a expansé le texte au-delà de la limite tokens.
+          // Re-split en 2 fragments plus petits et synthétise séquentiellement.
+          const halfMax = Math.floor(text.length / 2);
+          const parts = forceSplitLongSentence(text, halfMax);
+          if (parts.length >= 2) {
+            log(`  ↳ XTTS 422 sur ${text.length} chars → re-split en ${parts.length}`, 'info');
+            const subWavs = [];
+            for (const p of parts) {
+              if (aborted) throw new Error('Aborted');
+              subWavs.push(await xttsTTSOne(p, voice, lang, speed, retries, depth + 1));
+            }
+            return concatWavBuffers(subWavs);
+          }
+          throw new Error(`XTTS 422 tokenizer (insplittable) : ${err}`);
+        }
         throw new Error(`XTTS ${r.status} : ${err}`);
       }
       return await r.arrayBuffer();
@@ -3418,7 +3433,9 @@ async function xttsTTS(ssml, retries = 4) {
 
   // CRITIQUE : XTTS-v2 a un cap par langue (FR=253). Au-delà → "index out of range in self".
   // On pre-split agressivement à 240 pour garder une marge (le cleaner XTTS peut allonger).
-  const XTTS_FR_LIMIT = 240;
+  // Limite agressive : le cleaner XTTS peut allonger (chiffres → mots),
+  // donc on prend une grosse marge sous la limite réelle de 253.
+  const XTTS_FR_LIMIT = 200;
   const params = getXttsParams();
   if (text.length > XTTS_FR_LIMIT) {
     const fragments = forceSplitLongSentence(text, XTTS_FR_LIMIT);
