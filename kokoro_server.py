@@ -305,8 +305,41 @@ except Exception as e:
     sys.exit(1)
 
 
+# ── Voix custom par mixing d'embeddings ─────────────────────────────
+# Kokoro v1.0 n'a pas de voix FR mâle native. On en crée une en mélangeant
+# une voix mâle anglaise (timbre/grain masculin) avec ff_siwis (intonation FR).
+# Le résultat est une voix FR mâle approximative (léger résidu d'accent
+# selon la base mâle source).
+#
+# Format : { 'nom_publique': (voix_male, voix_fr, ratio_male) }
+# Ratio_male = 0.6 = 60% timbre mâle / 40% inflexion FR Siwis.
+CUSTOM_BLENDS = {
+    'fm_george': ('bm_george', 'ff_siwis', 0.60),
+}
+
+# Cache des embeddings blendés (calculé au démarrage)
+__blend_cache = {}
+
+
+def _build_blends():
+    """Pré-calcule les embeddings mélangés au démarrage."""
+    global __blend_cache
+    for name, (male_v, fr_v, ratio) in CUSTOM_BLENDS.items():
+        try:
+            male = kokoro.voices[male_v]
+            fr = kokoro.voices[fr_v]
+            blend = ratio * male + (1.0 - ratio) * fr
+            __blend_cache[name] = blend
+            print(f"  OK blend '{name}' = {ratio:.0%} {male_v} + {1-ratio:.0%} {fr_v}")
+        except Exception as e:
+            print(f"  ! blend '{name}' echec : {e}")
+
+
+_build_blends()
+
+
 def list_available_voices():
-    """Retourne la liste des voix FR (filtre sur ALLOWED_PREFIXES)."""
+    """Retourne la liste des voix FR (natives + custom blends)."""
     try:
         all_voices = kokoro.get_voices()
     except Exception:
@@ -315,7 +348,13 @@ def list_available_voices():
     for v in sorted(all_voices):
         if v.startswith(ALLOWED_PREFIXES):
             gender = 'F' if v.startswith('ff_') else 'M'
-            out.append({'name': v, 'gender': gender, 'language': 'fr'})
+            out.append({'name': v, 'gender': gender, 'language': 'fr', 'custom': False})
+    # Ajoute les blends custom
+    for name in sorted(__blend_cache.keys()):
+        if not name.startswith(ALLOWED_PREFIXES):
+            continue
+        gender = 'F' if name.startswith('ff_') else 'M'
+        out.append({'name': name, 'gender': gender, 'language': 'fr', 'custom': True})
     return out
 
 
@@ -355,9 +394,14 @@ def synth_one(text, voice, speed, lang):
 
     Sérialisé via _SYNTH_LOCK : appels concurrents corrompent l'état interne
     de kokoro_onnx (audio cross-talk entre requêtes Flask threaded).
+
+    Si 'voice' est le nom d'un blend custom, on passe l'embedding numpy
+    directement au lieu d'un nom de voix.
     """
+    # Voix custom (blend pré-calculé) -> passe l'embedding numpy
+    voice_arg = __blend_cache.get(voice, voice)
     with _SYNTH_LOCK:
-        samples, sr = kokoro.create(text, voice=voice, speed=speed, lang=lang)
+        samples, sr = kokoro.create(text, voice=voice_arg, speed=speed, lang=lang)
     return samples, sr
 
 
@@ -443,7 +487,8 @@ def synth():
         }), 413
 
     available = [v['name'] for v in list_available_voices()]
-    if voice not in available:
+    # Voix valide = soit native dans le bin Kokoro, soit dans le blend cache
+    if voice not in available and voice not in __blend_cache:
         if available:
             voice = available[0]
         else:
