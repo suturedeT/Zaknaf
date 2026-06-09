@@ -314,7 +314,7 @@ except Exception as e:
 # Format : { 'nom_publique': (voix_male, voix_fr, ratio_male) }
 # Ratio_male = 0.6 = 60% timbre mâle / 40% inflexion FR Siwis.
 CUSTOM_BLENDS = {
-    'fm_george': ('bm_george', 'ff_siwis', 0.60),
+    'fm_george': ('bm_george', 'ff_siwis', 0.50),
 }
 
 # Cache des embeddings blendés (calculé au démarrage)
