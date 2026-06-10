@@ -2455,12 +2455,36 @@ async function startConversion() {
         i += chunkIdxs.length;
       }
     } else {
-      for (let i = 0; i < total; i += CONCURRENCY) {
+      // Concurrence adaptée au backend :
+      // - Kokoro local : 1 (Lock serveur -> parallèle inutile et peut crasher
+      //   le Flask sous saturation thread/preflight OPTIONS spammeux)
+      // - Piper local : 2 (Piper est plus tolérant mais reste local)
+      // - Google API   : 4 (cloud, supporte le parallèle)
+      const effectiveConcurrency = isKokoroVoice(selectedVoice) ? 1
+                                 : isPiperVoice(selectedVoice)  ? 2
+                                 : CONCURRENCY;
+      for (let i = 0; i < total; i += effectiveConcurrency) {
         if (aborted) { onAbort(); return; }
-        const slice = Array.from({length: Math.min(CONCURRENCY, total-i)}, (_,j) => i+j);
+        const slice = Array.from({length: Math.min(effectiveConcurrency, total-i)}, (_,j) => i+j);
         await Promise.all(slice.map(async idx => {
           const ssml = ssmlMap[idx] || `<speak>${escapeXml(sentences[idx].text)}</speak>`;
-          mp3Map[idx] = await synthesize(ssml);
+          // Retry agressif si le serveur local crash transitoire
+          let attempts = 0, lastErr;
+          while (attempts < 3) {
+            try {
+              mp3Map[idx] = await synthesize(ssml);
+              break;
+            } catch (e) {
+              lastErr = e;
+              attempts++;
+              if (attempts >= 3 || !isLocalBackend(selectedVoice)) throw e;
+              if (aborted) { onAbort(); return; }
+              const waitMs = 2000 * attempts;  // 2s, 4s
+              log(`⚠ TTS ${idx} échec (${e.message?.slice(0,60)}) → retry dans ${waitMs/1000}s`, 'err');
+              await sleep(waitMs);
+            }
+          }
+          if (!mp3Map[idx]) throw lastErr;
           ttsDone++;
           setPhaseBar(1, ttsDone/total*100);
           setPhaseDetail(1, `Ch.${ci+1}/${totalChapters} — ${ttsDone}/${total}`);
