@@ -775,6 +775,8 @@ const VOICES = [
   { name:'fr-FR-Chirp3-HD-Fenrir',       label:'Fenrir',   gen:'Homme', type:'c3hd', desc:'Chirp3 · expressif' },
   { name:'fr-FR-Chirp3-HD-Puck',         label:'Puck',     gen:'Homme', type:'c3hd', desc:'Chirp3 · dynamique' },
   // ── Piper (local, gratuit) — nécessite piper_server.py lancé ─────────────
+  { name:'piper:fr_FR-tom-medium:0',    label:'Tom (Piper)',     gen:'Homme', type:'piper', desc:'Piper · Tom · voix mâle FR douce',
+    backend:'piper', pipModel:'fr_FR-tom-medium', pipSpeakerId:0 },
   { name:'piper:fr_FR-upmc-medium:0',   label:'Jessica (Piper)', gen:'Femme', type:'piper', desc:'Piper · UPMC · 100% local & gratuit',
     backend:'piper', pipModel:'fr_FR-upmc-medium', pipSpeakerId:0 },
   { name:'piper:fr_FR-upmc-medium:1',   label:'Pierre (Piper)',  gen:'Homme', type:'piper', desc:'Piper · UPMC · 100% local & gratuit',
@@ -2461,7 +2463,7 @@ async function startConversion() {
       // - Piper local : 2 (Piper est plus tolérant mais reste local)
       // - Google API   : 4 (cloud, supporte le parallèle)
       const effectiveConcurrency = isKokoroVoice(selectedVoice) ? 1
-                                 : isPiperVoice(selectedVoice)  ? 2
+                                 : isPiperVoice(selectedVoice)  ? 4
                                  : CONCURRENCY;
       for (let i = 0; i < total; i += effectiveConcurrency) {
         if (aborted) { onAbort(); return; }

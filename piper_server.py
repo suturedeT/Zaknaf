@@ -53,6 +53,13 @@ import re
 import sys
 import wave
 
+# ── Performance : utiliser tous les coeurs CPU pour ONNX ───────────────
+# Piper utilise onnxruntime en interne. Par défaut il ne prend qu'un nombre
+# limité de threads ce qui plafonne la vitesse. On laisse ONNX scaler.
+_cpu_count = os.cpu_count() or 4
+os.environ.setdefault('OMP_NUM_THREADS', str(_cpu_count))
+os.environ.setdefault('MKL_NUM_THREADS', str(_cpu_count))
+
 # Force UTF-8 sur la console Windows (cp1252 par défaut ne gère pas ─, ✓, ⚠, etc.)
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -79,6 +86,7 @@ PORT = 5005
 # Note : fr_FR-upmc-medium est multi-locuteur (jessica=0, pierre=1).
 VOICE_NAMES = [
     'fr_FR-upmc-medium',
+    'fr_FR-tom-medium',  # voix mâle FR douce (alternative à Pierre rocailleux)
 ]
 
 # ── Liaisons françaises forcées ───────────────────────────────────────
@@ -205,7 +213,7 @@ def tts():
         }), 404
 
     # Paramètres de prosodie tunables (défauts orientés "naturel" pour le FR)
-    length_scale = float(data.get('length_scale', 1.10))   # 1.0 = vitesse normale, >1 = plus lent et expressif
+    length_scale = float(data.get('length_scale', 1.00))   # 1.0 = vitesse normale (gain ~10% temps)
     noise_scale  = float(data.get('noise_scale', 0.667))   # variabilité du pitch
     noise_w     = float(data.get('noise_w_scale', 0.9))    # variabilité durée syllabes (défaut 0.8 → 0.9 = plus humain)
     volume       = float(data.get('volume', 1.0))
