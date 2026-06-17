@@ -457,11 +457,14 @@ input[type=range].tts-slider::-webkit-slider-thumb {
   box-shadow:0 0 6px rgba(192,132,252,0.5);
 }
 .tts-voice-select {
-  background:var(--lift); border:1px solid var(--border);
-  border-radius:6px; color:var(--ink); font-size:12px;
-  padding:5px 8px; outline:none; cursor:pointer; max-width:150px;
+  background:#2a2535; border:1px solid var(--border);
+  border-radius:6px; color:#e0d8f0; font-size:12px;
+  padding:5px 8px; outline:none; cursor:pointer; max-width:180px;
 }
 .tts-voice-select:focus { border-color:var(--accent); }
+.tts-voice-select option, .tts-voice-select optgroup {
+  background:#1e1a28; color:#e0d8f0;
+}
 
 /* Paragraph highlight while reading */
 .tts-reading {
@@ -1023,28 +1026,66 @@ let ttsSegIdx   = 0;
 let ttsSpeed    = parseFloat(localStorage.getItem('epublu_tts_speed') || '1');
 
 // ── Charge les voix dans le select ──
+const MS_PRIORITY = ['Microsoft Denise', 'Microsoft Henri'];
+
 function ttsLoadVoices() {
   const sel    = document.getElementById('ttsVoiceSelect');
   const voices = speechSynthesis.getVoices();
   if (!voices.length) return;
   sel.innerHTML = '';
-  const fr     = voices.filter(v => v.lang.startsWith('fr'));
+
+  const fr = voices.filter(v => v.lang.startsWith('fr'));
   const others = voices.filter(v => !v.lang.startsWith('fr'));
-  [['Français', fr], ['Autres', others]].forEach(([label, list]) => {
-    if (!list.length) return;
+
+  // Voix recommandées en tête (Denise & Henri si disponibles)
+  const top = fr.filter(v => MS_PRIORITY.some(p => v.name.startsWith(p)));
+  const rest = fr.filter(v => !MS_PRIORITY.some(p => v.name.startsWith(p)));
+
+  if (top.length) {
     const grp = document.createElement('optgroup');
-    grp.label = label;
-    list.forEach(v => {
+    grp.label = '⭐ Recommandées';
+    top.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.name;
+      const label = v.name.includes('Denise') ? 'Denise ♀ · Neural FR' : 'Henri ♂ · Neural FR';
+      opt.textContent = label;
+      grp.appendChild(opt);
+    });
+    sel.appendChild(grp);
+  }
+
+  if (rest.length) {
+    const grp = document.createElement('optgroup');
+    grp.label = 'Français';
+    rest.forEach(v => {
       const opt = document.createElement('option');
       opt.value = v.name;
       opt.textContent = v.name + (v.localService ? '' : ' 🌐');
       grp.appendChild(opt);
     });
     sel.appendChild(grp);
-  });
+  }
+
+  if (others.length) {
+    const grp = document.createElement('optgroup');
+    grp.label = 'Autres langues';
+    others.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.name;
+      opt.textContent = `${v.name} (${v.lang})`;
+      grp.appendChild(opt);
+    });
+    sel.appendChild(grp);
+  }
+
   const saved = localStorage.getItem('epublu_tts_voice');
-  if (saved && voices.find(v => v.name === saved)) sel.value = saved;
-  else if (fr.length) sel.value = fr[0].name;
+  if (saved && voices.find(v => v.name === saved)) {
+    sel.value = saved;
+  } else if (top.length) {
+    sel.value = top[0].name;
+  } else if (fr.length) {
+    sel.value = fr[0].name;
+  }
 }
 speechSynthesis.addEventListener('voiceschanged', ttsLoadVoices);
 ttsLoadVoices();
