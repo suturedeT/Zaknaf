@@ -456,15 +456,47 @@ input[type=range].tts-slider::-webkit-slider-thumb {
   background:var(--accent); cursor:pointer;
   box-shadow:0 0 6px rgba(192,132,252,0.5);
 }
-.tts-voice-select {
-  background:#2a2535; border:1px solid var(--border);
+/* custom voice dropdown */
+.voice-dropdown {
+  position:relative; max-width:180px; flex-shrink:0;
+}
+.voice-dropdown-btn {
+  width:100%; background:#2a2535; border:1px solid var(--border);
   border-radius:6px; color:#e0d8f0; font-size:12px;
-  padding:5px 8px; outline:none; cursor:pointer; max-width:180px;
+  padding:5px 26px 5px 8px; cursor:pointer; text-align:left;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  position:relative;
 }
-.tts-voice-select:focus { border-color:var(--accent); }
-.tts-voice-select option, .tts-voice-select optgroup {
-  background:#1e1a28; color:#e0d8f0;
+.voice-dropdown-btn::after {
+  content:'▾'; position:absolute; right:8px; top:50%;
+  transform:translateY(-50%); color:var(--ink-dim); pointer-events:none;
 }
+.voice-dropdown-btn:focus { outline:none; border-color:var(--accent); }
+
+.voice-dropdown-list {
+  display:none; position:absolute; bottom:calc(100% + 6px); left:0; right:0;
+  background:#1e1a28; border:1px solid var(--border-hi);
+  border-radius:8px; overflow:hidden; z-index:200;
+  max-height:280px; overflow-y:auto;
+  box-shadow:0 -8px 24px rgba(0,0,0,0.6);
+}
+.voice-dropdown-list::-webkit-scrollbar { width:3px; }
+.voice-dropdown-list::-webkit-scrollbar-thumb { background:var(--border-hi); border-radius:2px; }
+.voice-dropdown-list.open { display:block; }
+
+.voice-dd-group {
+  font-size:10px; color:var(--ink-dim); letter-spacing:0.08em;
+  text-transform:uppercase; padding:8px 10px 4px;
+  border-top:1px solid var(--border);
+}
+.voice-dd-group:first-child { border-top:none; }
+
+.voice-dd-item {
+  padding:7px 12px; font-size:12px; color:#d4cfe0;
+  cursor:pointer; transition:background 0.12s;
+}
+.voice-dd-item:hover { background:rgba(192,132,252,0.12); color:#fff; }
+.voice-dd-item.selected { color:var(--accent); background:rgba(192,132,252,0.08); }
 
 /* Paragraph highlight while reading */
 .tts-reading {
@@ -568,7 +600,10 @@ input[type=range].tts-slider::-webkit-slider-thumb {
           <input type="range" class="tts-slider" id="ttsSpeedSlider" min="0.6" max="1.8" step="0.1" value="1">
           <span class="tts-speed-val" id="ttsSpeedVal">1×</span>
         </div>
-        <select class="tts-voice-select" id="ttsVoiceSelect" title="Voix"></select>
+        <div class="voice-dropdown" id="voiceDropdown">
+          <button class="voice-dropdown-btn" id="voiceDropdownBtn" onclick="toggleVoiceDropdown()">Chargement…</button>
+          <div class="voice-dropdown-list" id="voiceDropdownList"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1025,75 +1060,85 @@ let ttsSegments = [];
 let ttsSegIdx   = 0;
 let ttsSpeed    = parseFloat(localStorage.getItem('epublu_tts_speed') || '1');
 
-// ── Charge les voix dans le select ──
+// ── Dropdown voix custom ──
 const MS_PRIORITY = ['Microsoft Denise', 'Microsoft Henri'];
+let selectedVoiceName = localStorage.getItem('epublu_tts_voice') || '';
+
+function toggleVoiceDropdown() {
+  document.getElementById('voiceDropdownList').classList.toggle('open');
+}
+
+// Ferme si clic en dehors
+document.addEventListener('click', e => {
+  if (!document.getElementById('voiceDropdown').contains(e.target))
+    document.getElementById('voiceDropdownList').classList.remove('open');
+});
+
+function selectVoice(name, label) {
+  selectedVoiceName = name;
+  localStorage.setItem('epublu_tts_voice', name);
+  document.getElementById('voiceDropdownBtn').textContent = label;
+  document.getElementById('voiceDropdownList').classList.remove('open');
+  document.querySelectorAll('.voice-dd-item').forEach(el =>
+    el.classList.toggle('selected', el.dataset.voice === name));
+  if (ttsPlaying) ttsStop();
+}
+
+function ttsGetVoice() {
+  return speechSynthesis.getVoices().find(v => v.name === selectedVoiceName) || null;
+}
 
 function ttsLoadVoices() {
-  const sel    = document.getElementById('ttsVoiceSelect');
   const voices = speechSynthesis.getVoices();
   if (!voices.length) return;
-  sel.innerHTML = '';
 
-  const fr = voices.filter(v => v.lang.startsWith('fr'));
+  const fr     = voices.filter(v => v.lang.startsWith('fr'));
   const others = voices.filter(v => !v.lang.startsWith('fr'));
+  const top    = fr.filter(v => MS_PRIORITY.some(p => v.name.startsWith(p)));
+  const rest   = fr.filter(v => !MS_PRIORITY.some(p => v.name.startsWith(p)));
 
-  // Voix recommandées en tête (Denise & Henri si disponibles)
-  const top = fr.filter(v => MS_PRIORITY.some(p => v.name.startsWith(p)));
-  const rest = fr.filter(v => !MS_PRIORITY.some(p => v.name.startsWith(p)));
+  const list = document.getElementById('voiceDropdownList');
+  list.innerHTML = '';
 
-  if (top.length) {
-    const grp = document.createElement('optgroup');
-    grp.label = '⭐ Recommandées';
-    top.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.name;
-      const label = v.name.includes('Denise') ? 'Denise ♀ · Neural FR' : 'Henri ♂ · Neural FR';
-      opt.textContent = label;
-      grp.appendChild(opt);
+  function addGroup(title, items, labelFn) {
+    if (!items.length) return;
+    const grp = document.createElement('div');
+    grp.className = 'voice-dd-group';
+    grp.textContent = title;
+    list.appendChild(grp);
+    items.forEach(v => {
+      const item = document.createElement('div');
+      item.className = 'voice-dd-item';
+      item.dataset.voice = v.name;
+      item.textContent = labelFn(v);
+      item.onclick = () => selectVoice(v.name, item.textContent);
+      list.appendChild(item);
     });
-    sel.appendChild(grp);
   }
 
-  if (rest.length) {
-    const grp = document.createElement('optgroup');
-    grp.label = 'Français';
-    rest.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.name;
-      opt.textContent = v.name + (v.localService ? '' : ' 🌐');
-      grp.appendChild(opt);
-    });
-    sel.appendChild(grp);
-  }
+  addGroup('⭐ Recommandées', top, v =>
+    v.name.includes('Denise') ? 'Denise ♀ · Neural FR' : 'Henri ♂ · Neural FR');
+  addGroup('Français', rest, v => v.name + (v.localService ? '' : ' 🌐'));
+  addGroup('Autres langues', others, v => `${v.name} (${v.lang})`);
 
-  if (others.length) {
-    const grp = document.createElement('optgroup');
-    grp.label = 'Autres langues';
-    others.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.name;
-      opt.textContent = `${v.name} (${v.lang})`;
-      grp.appendChild(opt);
-    });
-    sel.appendChild(grp);
-  }
-
+  // Sélection initiale
   const saved = localStorage.getItem('epublu_tts_voice');
-  if (saved && voices.find(v => v.name === saved)) {
-    sel.value = saved;
-  } else if (top.length) {
-    sel.value = top[0].name;
-  } else if (fr.length) {
-    sel.value = fr[0].name;
+  const defaultVoice = saved && voices.find(v => v.name === saved)
+    ? voices.find(v => v.name === saved)
+    : (top[0] || fr[0] || voices[0]);
+
+  if (defaultVoice) {
+    const item = list.querySelector(`[data-voice="${CSS.escape(defaultVoice.name)}"]`);
+    const label = item ? item.textContent : defaultVoice.name;
+    selectedVoiceName = defaultVoice.name;
+    document.getElementById('voiceDropdownBtn').textContent = label;
+    item?.classList.add('selected');
   }
 }
+
 speechSynthesis.addEventListener('voiceschanged', ttsLoadVoices);
 ttsLoadVoices();
 
-document.getElementById('ttsVoiceSelect').addEventListener('change', e => {
-  localStorage.setItem('epublu_tts_voice', e.target.value);
-  if (ttsPlaying) { ttsStop(); }
-});
 
 // ── Slider vitesse ──
 (function() {
@@ -1184,8 +1229,7 @@ function ttsPlaySegment(idx) {
   const utter  = new SpeechSynthesisUtterance(seg.text);
   utter.rate   = ttsSpeed;
   utter.lang   = 'fr-FR';
-  const selVoice = document.getElementById('ttsVoiceSelect').value;
-  const voice    = speechSynthesis.getVoices().find(v => v.name === selVoice);
+  const voice = ttsGetVoice();
   if (voice) utter.voice = voice;
 
   utter.onend   = () => { if (ttsPlaying) ttsPlaySegment(idx + 1); };
