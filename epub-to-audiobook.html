@@ -1058,7 +1058,10 @@ function buildSourceDropdowns() {
           <label style="font-size:11px;color:var(--ink-dim)">🌸 Kokoro (local)</label>
           ${kokoroStatus}
         </div>
-        <select id="ddKokoro" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__kokoroAvailable === false ? 'disabled' : ''}>${kokoroOpts}</select>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="ddKokoro" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__kokoroAvailable === false ? 'disabled' : ''}>${kokoroOpts}</select>
+          <button class="vc-test-btn" style="position:static;flex-shrink:0" onclick="testKokoroVoice(this)" title="Écouter un extrait avec la voix fm_drow" ${__kokoroAvailable ? '' : 'disabled'}>🔊 Tester</button>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
           <label style="font-size:10px;color:var(--ink-dim);min-width:48px">Vitesse</label>
           <input type="range" id="kokoroSpeed" min="0.70" max="1.20" step="0.05"
@@ -1083,6 +1086,15 @@ function selectVoiceFromDropdown(name) {
   updateCostEstimate && updateCostEstimate();
   refreshCachePanel && refreshCachePanel();
   refreshQuotaPanel && refreshQuotaPanel();
+}
+
+// Bouton "Tester" du dropdown Kokoro : joue un extrait avec la voix sélectionnée (fm_drow)
+function testKokoroVoice(btnEl) {
+  const ddVal = document.getElementById('ddKokoro')?.value;
+  const vname = ddVal ? ddVal.slice(7) : (__kokoroVoices[0] && __kokoroVoices[0].name);
+  const kv = __kokoroVoices.find(x => x.name === vname) || __kokoroVoices[0];
+  if (!kv) { alert('Aucune voix Kokoro disponible — lance start_kokoro.bat.'); return; }
+  testVoice({ name: `kokoro:${kv.name}`, label: kv.label || kv.name }, btnEl);
 }
 
 // Callback slider vitesse Kokoro : persiste et met à jour l'affichage
@@ -1292,7 +1304,7 @@ async function testVoice(voice, btnEl) {
     });
     __currentVoiceAudio = null;
   }
-  if (!gcpApiKey) {
+  if (!isLocalBackend(voice.name) && !gcpApiKey) {
     alert('Saisis ta clé Google Cloud d\'abord.');
     return;
   }
