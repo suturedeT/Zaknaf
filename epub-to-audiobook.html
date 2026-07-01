@@ -932,6 +932,9 @@ document.getElementById('gcpKey').value    = gcpApiKey;
 document.getElementById('claudeKey').value = claudeApiKey;
 seedQuotaIfNeeded();
 buildVoiceGrid();
+// Le picker de voix (et les backends locaux Piper/XTTS/Kokoro, 0 clé requise)
+// doit rester accessible meme sans cles Google/Claude deja validees.
+showStep2();
 refreshGlobalQuotaBanner();
 piperHealthCheck().then(ok => {
   console.log('[Piper] disponible =', ok);
@@ -1423,7 +1426,10 @@ function showStep2() {
 // ─────────────────────────────────────────────────────────────────────────────
 // EPUB DROP
 // ─────────────────────────────────────────────────────────────────────────────
+let __dropSetupDone = false;
 function setupDrop() {
+  if (__dropSetupDone) return;
+  __dropSetupDone = true;
   const dz = document.getElementById('dropzone');
   const fi = document.getElementById('fileInput');
   dz.addEventListener('click', () => fi.click());
