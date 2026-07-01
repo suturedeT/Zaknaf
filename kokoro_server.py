@@ -17,8 +17,8 @@ USAGE
 
   python kokoro_server.py
 
-  Serveur sur http://127.0.0.1:5006
-  Ouvre epub-reader.html → voix "fm_drow · Drow" disponible.
+  Serveur sur http://127.0.0.1:5007
+  Ouvre epub-to-audiobook.html (ou epub-reader.html) → voix "fm_drow" disponible.
   Ctrl+C pour arrêter.
 
 ────────────────────────────────────────────────────────────────────────
@@ -42,8 +42,12 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("PYTHONUTF8", "1")
 
 HOST = "127.0.0.1"
-PORT = 5006
+PORT = 5007
 SAMPLE_RATE = 24000
+
+VOICES = [
+    {"name": "fm_drow", "gender": "M", "label": "Drow (fine-tuné maison)"},
+]
 
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
@@ -91,9 +95,14 @@ def float32_to_wav(samples) -> bytes:
 def health():
     return jsonify({
         "status": "ok" if _pipeline is not None else "loading",
-        "voices": ["fm_drow"] if _pipeline is not None else [],
+        "voices": VOICES if _pipeline is not None else [],
         "model": "Kokoro-82M fine-tuné (fm_drow)",
     })
+
+
+@app.route("/voices", methods=["GET"])
+def voices():
+    return jsonify({"voices": VOICES if _pipeline is not None else []})
 
 
 @app.route("/tts", methods=["POST", "OPTIONS"])
@@ -150,7 +159,7 @@ def root():
     return jsonify({
         "service": "Kokoro TTS local (fm_drow)",
         "port": PORT,
-        "endpoints": ["/health (GET)", "/tts (POST)", "/shutdown (POST)"],
+        "endpoints": ["/health (GET)", "/voices (GET)", "/tts (POST)", "/shutdown (POST)"],
         "ready": _pipeline is not None,
     })
 
@@ -161,6 +170,6 @@ if __name__ == "__main__":
     print("─" * 60)
     load_model()
     print(f"\n✓ Serveur en écoute sur http://{HOST}:{PORT}\n")
-    print("  Ouvre epub-reader.html → voix 'fm_drow · Drow' disponible.")
+    print("  Ouvre epub-to-audiobook.html (ou epub-reader.html) → voix 'fm_drow' disponible.")
     print("  Ctrl+C pour arrêter.\n")
     app.run(host=HOST, port=PORT, debug=False, threaded=True)

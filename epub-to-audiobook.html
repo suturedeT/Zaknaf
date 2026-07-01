@@ -795,13 +795,13 @@ function getVoiceObj(name) {
     const xv = __xttsVoices.find(x => x.name === vname);
     if (xv) return { name, label: xv.name, backend: 'xtts', xttsVoice: xv.name, gen: '—', type: 'xtts', desc: 'Voice cloning' };
   }
-  // Voix Kokoro dynamiques (ff_siwis, etc.)
+  // Voix Kokoro dynamiques (fm_drow, etc.)
   if (name.startsWith('kokoro:')) {
     const vname = name.slice(7);
     const kv = __kokoroVoices.find(x => x.name === vname);
     if (kv) {
       const genLabel = kv.gender === 'F' ? 'Femme' : kv.gender === 'M' ? 'Homme' : '—';
-      return { name, label: kv.name, backend: 'kokoro', kokoroVoice: kv.name, gen: genLabel, type: 'kokoro', desc: 'Kokoro · ONNX rapide' };
+      return { name, label: kv.name, backend: 'kokoro', kokoroVoice: kv.name, gen: genLabel, type: 'kokoro', desc: 'Kokoro · fine-tuné local' };
     }
   }
   return null;
@@ -1055,7 +1055,7 @@ function buildSourceDropdowns() {
       </div>
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <label style="font-size:11px;color:var(--ink-dim)">🌸 Kokoro (ONNX)</label>
+          <label style="font-size:11px;color:var(--ink-dim)">🌸 Kokoro (local)</label>
           ${kokoroStatus}
         </div>
         <select id="ddKokoro" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__kokoroAvailable === false ? 'disabled' : ''}>${kokoroOpts}</select>

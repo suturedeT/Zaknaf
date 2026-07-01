@@ -7,6 +7,9 @@ models/
 __pycache__/
 *.pyc
 
+# Config locale d'outillage (previews, etc.)
+.claude/
+
 # Tous les WAV de test à la racine
 test_*.wav
 
