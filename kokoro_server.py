@@ -305,6 +305,32 @@ except Exception as e:
     sys.exit(1)
 
 
+# ── Voix fm_drow (modèle PyTorch fine-tuné séparé, pas le moteur ONNX) ──
+# Package self-contained : fm_drow.pth (poids), config.json, voices/fm_drow.pt
+DROW_DIR = r"C:\Users\EA_ADM\Documents\claude_ai\drizzt_out\fm_drow_kokoro"
+DROW_SAMPLE_RATE = 24000
+_drow_pipeline = None
+_drow_voice = None
+
+def _load_drow():
+    """Charge le pipeline PyTorch fm_drow. Best-effort : une erreur ici ne doit
+    pas empêcher le serveur ONNX de démarrer, juste priver la voix fm_drow."""
+    global _drow_pipeline, _drow_voice
+    if not os.path.isdir(DROW_DIR):
+        print(f"  ! fm_drow non trouve ({DROW_DIR}) -- voix ignoree")
+        return
+    try:
+        os.environ.setdefault('HF_HUB_OFFLINE', '1')
+        sys.path.insert(0, DROW_DIR)
+        from fm_drow import load as _drow_load
+        _drow_pipeline, _drow_voice = _drow_load(device='cpu')
+        print("  OK fm_drow charge (modele PyTorch fine-tune)")
+    except Exception as e:
+        print(f"  ! Erreur chargement fm_drow : {e}")
+
+_load_drow()
+
+
 # ── Voix custom par mixing d'embeddings ─────────────────────────────
 # Kokoro v1.0 n'a pas de voix FR mâle native. On en crée une en mélangeant
 # une voix mâle anglaise (timbre/grain masculin) avec ff_siwis (intonation FR).
@@ -355,6 +381,9 @@ def list_available_voices():
             continue
         gender = 'F' if name.startswith('ff_') else 'M'
         out.append({'name': name, 'gender': gender, 'language': 'fr', 'custom': True})
+    # Voix fm_drow (modèle fine-tuné à part, pas un blend)
+    if _drow_pipeline is not None:
+        out.append({'name': 'fm_drow', 'gender': 'M', 'language': 'fr', 'custom': True})
     return out
 
 
@@ -398,6 +427,14 @@ def synth_one(text, voice, speed, lang):
     Si 'voice' est le nom d'un blend custom, on passe l'embedding numpy
     directement au lieu d'un nom de voix.
     """
+    # fm_drow : moteur PyTorch séparé, pas le moteur ONNX kokoro_onnx
+    if voice == 'fm_drow' and _drow_pipeline is not None:
+        with _SYNTH_LOCK:
+            chunks = [a for _gs, _ps, a in _drow_pipeline(text, voice=_drow_voice, speed=speed)]
+        if not chunks:
+            raise RuntimeError('Synthèse fm_drow vide')
+        return np.concatenate(chunks).astype('float32'), DROW_SAMPLE_RATE
+
     # Voix custom (blend pré-calculé) -> passe l'embedding numpy
     voice_arg = __blend_cache.get(voice, voice)
     with _SYNTH_LOCK:
