@@ -1060,19 +1060,6 @@ let ttsSegments = [];
 let ttsSegIdx   = 0;
 let ttsSpeed    = parseFloat(localStorage.getItem('epublu_tts_speed') || '1');
 
-// ── Kokoro local server ──
-const KOKORO_URL = 'http://127.0.0.1:5007';
-let kokoroAvailable = false;
-
-async function probeKokoro() {
-  try {
-    const r = await fetch(KOKORO_URL + '/health', { signal: AbortSignal.timeout(1200) });
-    if (r.ok) { const d = await r.json(); kokoroAvailable = d.status === 'ok'; }
-  } catch(_) { kokoroAvailable = false; }
-  ttsLoadVoices();
-}
-probeKokoro();
-
 // ── Dropdown voix custom ──
 const MS_PRIORITY = ['Microsoft Denise', 'Microsoft Henri'];
 let selectedVoiceName = localStorage.getItem('epublu_tts_voice') || '';
@@ -1127,20 +1114,6 @@ function ttsLoadVoices() {
       item.onclick = () => selectVoice(v.name, item.textContent);
       list.appendChild(item);
     });
-  }
-
-  // Voix Kokoro locale en tête si serveur disponible
-  if (kokoroAvailable) {
-    const grp = document.createElement('div');
-    grp.className = 'voice-dd-group';
-    grp.textContent = '🐉 Kokoro local';
-    list.appendChild(grp);
-    const item = document.createElement('div');
-    item.className = 'voice-dd-item';
-    item.dataset.voice = 'fm_drow';
-    item.textContent = 'fm_drow ♂ · Drow (local)';
-    item.onclick = () => selectVoice('fm_drow', item.textContent);
-    list.appendChild(item);
   }
 
   addGroup('⭐ Recommandées', top, v =>
@@ -1215,7 +1188,6 @@ function ttsToggle() {
 
 function ttsStop() {
   speechSynthesis.cancel();
-  ttsStopKokoro();
   ttsPlaying = false;
   ttsPaused  = false;
   ttsSegIdx  = 0;
@@ -1225,42 +1197,12 @@ function ttsStop() {
   ttsUpdateBtn();
 }
 
-// ── AudioContext pour Kokoro local ──
-let _audioCtx = null;
-let _audioSrc = null;
-
-function ttsStopKokoro() {
-  if (_audioSrc) { try { _audioSrc.stop(); } catch(_) {} _audioSrc = null; }
-}
-
-async function ttsPlayKokoroSegment(text, speed) {
-  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const resp = await fetch(KOKORO_URL + '/tts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, speed }),
-  });
-  if (!resp.ok) {
-    const e = await resp.json().catch(() => ({}));
-    throw new Error(e.error || `HTTP ${resp.status}`);
-  }
-  const decoded = await _audioCtx.decodeAudioData(await resp.arrayBuffer());
-  return new Promise(resolve => {
-    const src = _audioCtx.createBufferSource();
-    src.buffer = decoded;
-    src.connect(_audioCtx.destination);
-    _audioSrc = src;
-    src.onended = resolve;
-    src.start(0);
-  });
-}
-
 function ttsPlaySegment(idx) {
   if (!ttsPlaying) return;
   if (idx >= ttsSegments.length) {
     ttsRemoveHighlight();
     if (currentChIdx < currentBook.chapters.length - 1) {
-      ttsPlaying = false;
+      ttsPlaying = false;           // évite le stop() dans renderChapter
       renderChapter(currentChIdx + 1);
       ttsPlaying = true;
       setTimeout(() => {
@@ -1274,8 +1216,8 @@ function ttsPlaySegment(idx) {
     return;
   }
 
-  const seg = ttsSegments[idx];
-  ttsSegIdx = idx;
+  const seg  = ttsSegments[idx];
+  ttsSegIdx  = idx;
 
   ttsRemoveHighlight();
   seg.el.classList.add('tts-reading');
@@ -1284,29 +1226,18 @@ function ttsPlaySegment(idx) {
   document.getElementById('ttsLabel').textContent =
     `Segment ${idx + 1}/${ttsSegments.length} · Ch. ${currentChIdx + 1}`;
 
-  if (selectedVoiceName === 'fm_drow') {
-    // ── Kokoro local ──
-    ttsPlayKokoroSegment(seg.text, ttsSpeed)
-      .then(() => { if (ttsPlaying) ttsPlaySegment(idx + 1); })
-      .catch(e => {
-        console.error('[Kokoro]', e);
-        document.getElementById('ttsSentence').textContent = `⚠ Kokoro : ${e.message}`;
-        ttsPlaying = false; ttsUpdateBtn();
-      });
-  } else {
-    // ── Web Speech API ──
-    const utter  = new SpeechSynthesisUtterance(seg.text);
-    utter.rate   = ttsSpeed;
-    utter.lang   = 'fr-FR';
-    const voice  = ttsGetVoice();
-    if (voice) utter.voice = voice;
-    utter.onend   = () => { if (ttsPlaying) ttsPlaySegment(idx + 1); };
-    utter.onerror = e  => {
-      if (e.error === 'interrupted' || e.error === 'canceled') return;
-      ttsPlaySegment(idx + 1);
-    };
-    speechSynthesis.speak(utter);
-  }
+  const utter  = new SpeechSynthesisUtterance(seg.text);
+  utter.rate   = ttsSpeed;
+  utter.lang   = 'fr-FR';
+  const voice = ttsGetVoice();
+  if (voice) utter.voice = voice;
+
+  utter.onend   = () => { if (ttsPlaying) ttsPlaySegment(idx + 1); };
+  utter.onerror = e  => {
+    if (e.error === 'interrupted' || e.error === 'canceled') return;
+    ttsPlaySegment(idx + 1);
+  };
+  speechSynthesis.speak(utter);
 }
 
 function ttsRemoveHighlight() {

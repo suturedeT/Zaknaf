@@ -8,8 +8,8 @@ cd /d "%~dp0"
 title Kokoro TTS server
 echo.
 echo  ================================================
-echo   Demarrage Kokoro TTS (fine-tune maison)
-echo   ~2x temps reel sur CPU, voix FR fm_drow
+echo   Demarrage Kokoro TTS (ONNX runtime)
+echo   ~3-5x temps reel sur CPU, voix FR ff_siwis
 echo  ================================================
 echo.
 python kokoro_server.py

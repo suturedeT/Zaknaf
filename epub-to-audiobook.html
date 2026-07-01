@@ -795,13 +795,13 @@ function getVoiceObj(name) {
     const xv = __xttsVoices.find(x => x.name === vname);
     if (xv) return { name, label: xv.name, backend: 'xtts', xttsVoice: xv.name, gen: '—', type: 'xtts', desc: 'Voice cloning' };
   }
-  // Voix Kokoro dynamiques (fm_drow, etc.)
+  // Voix Kokoro dynamiques (ff_siwis, etc.)
   if (name.startsWith('kokoro:')) {
     const vname = name.slice(7);
     const kv = __kokoroVoices.find(x => x.name === vname);
     if (kv) {
       const genLabel = kv.gender === 'F' ? 'Femme' : kv.gender === 'M' ? 'Homme' : '—';
-      return { name, label: kv.name, backend: 'kokoro', kokoroVoice: kv.name, gen: genLabel, type: 'kokoro', desc: 'Kokoro · fine-tuné local' };
+      return { name, label: kv.name, backend: 'kokoro', kokoroVoice: kv.name, gen: genLabel, type: 'kokoro', desc: 'Kokoro · ONNX rapide' };
     }
   }
   return null;
@@ -932,9 +932,6 @@ document.getElementById('gcpKey').value    = gcpApiKey;
 document.getElementById('claudeKey').value = claudeApiKey;
 seedQuotaIfNeeded();
 buildVoiceGrid();
-// Le picker de voix (et les backends locaux Piper/XTTS/Kokoro, 0 clé requise)
-// doit rester accessible meme sans cles Google/Claude deja validees.
-showStep2();
 refreshGlobalQuotaBanner();
 piperHealthCheck().then(ok => {
   console.log('[Piper] disponible =', ok);
@@ -1058,13 +1055,10 @@ function buildSourceDropdowns() {
       </div>
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <label style="font-size:11px;color:var(--ink-dim)">🌸 Kokoro (local)</label>
+          <label style="font-size:11px;color:var(--ink-dim)">🌸 Kokoro (ONNX)</label>
           ${kokoroStatus}
         </div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <select id="ddKokoro" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__kokoroAvailable === false ? 'disabled' : ''}>${kokoroOpts}</select>
-          <button class="vc-test-btn" style="position:static;flex-shrink:0" onclick="testKokoroVoice(this)" title="Écouter un extrait avec la voix fm_drow" ${__kokoroAvailable ? '' : 'disabled'}>🔊 Tester</button>
-        </div>
+        <select id="ddKokoro" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__kokoroAvailable === false ? 'disabled' : ''}>${kokoroOpts}</select>
         <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
           <label style="font-size:10px;color:var(--ink-dim);min-width:48px">Vitesse</label>
           <input type="range" id="kokoroSpeed" min="0.70" max="1.20" step="0.05"
@@ -1089,15 +1083,6 @@ function selectVoiceFromDropdown(name) {
   updateCostEstimate && updateCostEstimate();
   refreshCachePanel && refreshCachePanel();
   refreshQuotaPanel && refreshQuotaPanel();
-}
-
-// Bouton "Tester" du dropdown Kokoro : joue un extrait avec la voix sélectionnée (fm_drow)
-function testKokoroVoice(btnEl) {
-  const ddVal = document.getElementById('ddKokoro')?.value;
-  const vname = ddVal ? ddVal.slice(7) : (__kokoroVoices[0] && __kokoroVoices[0].name);
-  const kv = __kokoroVoices.find(x => x.name === vname) || __kokoroVoices[0];
-  if (!kv) { alert('Aucune voix Kokoro disponible — lance start_kokoro.bat.'); return; }
-  testVoice({ name: `kokoro:${kv.name}`, label: kv.label || kv.name }, btnEl);
 }
 
 // Callback slider vitesse Kokoro : persiste et met à jour l'affichage
@@ -1307,7 +1292,7 @@ async function testVoice(voice, btnEl) {
     });
     __currentVoiceAudio = null;
   }
-  if (!isLocalBackend(voice.name) && !gcpApiKey) {
+  if (!gcpApiKey) {
     alert('Saisis ta clé Google Cloud d\'abord.');
     return;
   }
@@ -1426,10 +1411,7 @@ function showStep2() {
 // ─────────────────────────────────────────────────────────────────────────────
 // EPUB DROP
 // ─────────────────────────────────────────────────────────────────────────────
-let __dropSetupDone = false;
 function setupDrop() {
-  if (__dropSetupDone) return;
-  __dropSetupDone = true;
   const dz = document.getElementById('dropzone');
   const fi = document.getElementById('fileInput');
   dz.addEventListener('click', () => fi.click());
