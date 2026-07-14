@@ -930,7 +930,6 @@ let audioCtx = null;
 // ─────────────────────────────────────────────────────────────────────────────
 document.getElementById('gcpKey').value    = gcpApiKey;
 document.getElementById('claudeKey').value = claudeApiKey;
-seedQuotaIfNeeded();
 buildVoiceGrid();
 refreshGlobalQuotaBanner();
 piperHealthCheck().then(ok => {
@@ -1693,35 +1692,6 @@ function adjustMonthlyQuota() {
   refreshQuotaPanel();
 }
 
-// Seed initial du compteur — exécuté une seule fois par version (flag versionné).
-// Permet d'aligner le compteur local sur la consommation Google déjà engagée.
-// Active aussi automatiquement les protections (hard-block + verrouillage premium)
-// car le crédit gratuit est complètement épuisé.
-function seedQuotaIfNeeded() {
-  const SEED_VERSION = 'v2-202606';
-  if (localStorage.getItem('epubson_quota_seed') === SEED_VERSION) return;
-  // Valeurs constatées sur Google Cloud Console le 2026-06-07 :
-  // SKU "Count of characters for Chirp3-HD voices" = 15 543 942 caractères
-  // Crédit FreeTrialUpgrade entièrement consommé (0,00 € restant)
-  const seedMonth = '2026-06';
-  localStorage.setItem(quotaStoreKey('Chirp3-HD', seedMonth), '15543942');
-  // Active le hard-block par défaut (le crédit est mort, plus de marge)
-  if (localStorage.getItem('epubson_quota_hardblock') === null) {
-    localStorage.setItem('epubson_quota_hardblock', '1');
-  }
-  // Verrouille les voix premium par défaut (force Standard)
-  if (localStorage.getItem('epubson_premium_unlocked') === null) {
-    localStorage.setItem('epubson_premium_unlocked', '0');
-  }
-  // Bascule sur Standard si on était sur une voix premium
-  const currentVoice = localStorage.getItem('epubson_voice');
-  if (currentVoice && isPremiumVoice(currentVoice) && !isPremiumUnlocked()) {
-    localStorage.setItem('epubson_voice', 'fr-FR-Standard-C');
-    selectedVoice = 'fr-FR-Standard-C';
-  }
-  localStorage.setItem('epubson_quota_seed', SEED_VERSION);
-  console.log('[Quota] Seed v2 appliqué : Chirp3-HD juin = 15 543 942 chars · hard-block ON · premium verrouillé · voix=Standard-C');
-}
 
 // Total caractères + € facturé tous tiers confondus pour le mois courant.
 function getMonthlyTotalSpending() {
