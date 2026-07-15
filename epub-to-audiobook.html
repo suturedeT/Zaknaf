@@ -951,6 +951,7 @@ let gcpApiKey    = localStorage.getItem('epubson_gcp') || '';
 let claudeApiKey = localStorage.getItem('epubson_claude') || '';
 let selectedVoice = localStorage.getItem('epubson_voice') || 'fr-FR-Standard-C';
 let __currentVoiceAudio = null; // lecture en cours du bouton "Tester" une voix
+let __dropSetupDone = false; // garde anti double-binding pour setupDrop()
 // Voix premium (Chirp3-HD, Studio, etc.) verrouillées par défaut.
 // Déverrouillable via le bouton 🔓 au-dessus de la grille.
 function isPremiumVoice(name) {
@@ -1561,7 +1562,6 @@ function showStep2() {
 // ─────────────────────────────────────────────────────────────────────────────
 // EPUB DROP
 // ─────────────────────────────────────────────────────────────────────────────
-let __dropSetupDone = false;
 function setupDrop() {
   if (__dropSetupDone) return;
   __dropSetupDone = true;
