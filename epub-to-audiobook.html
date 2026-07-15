@@ -804,6 +804,15 @@ function getVoiceObj(name) {
       return { name, label: kv.name, backend: 'kokoro', kokoroVoice: kv.name, gen: genLabel, type: 'kokoro', desc: 'Kokoro · ONNX rapide' };
     }
   }
+  // Voix Pod GPU dynamiques (fm_drow, servi par un pod cloud distant)
+  if (name.startsWith('pod:')) {
+    const vname = name.slice(4);
+    const pv = __podVoices.find(x => x.name === vname);
+    if (pv) {
+      const genLabel = pv.gender === 'F' ? 'Femme' : pv.gender === 'M' ? 'Homme' : '—';
+      return { name, label: pv.name, backend: 'pod', podVoice: pv.name, gen: genLabel, type: 'pod', desc: 'Pod GPU · fine-tuné' };
+    }
+  }
   return null;
 }
 function isPiperVoice(name) {
@@ -818,9 +827,12 @@ function isXttsVoice(name) {
 function isKokoroVoice(name) {
   return !!(name && name.startsWith('kokoro:'));
 }
-// "Local backend" = pas Google = gratuit (Piper, XTTS, Kokoro)
+function isPodVoice(name) {
+  return !!(name && name.startsWith('pod:'));
+}
+// "Local backend" = pas Google = gratuit (Piper, XTTS, Kokoro, Pod GPU)
 function isLocalBackend(name) {
-  return isPiperVoice(name) || isXttsVoice(name) || isKokoroVoice(name);
+  return isPiperVoice(name) || isXttsVoice(name) || isKokoroVoice(name) || isPodVoice(name);
 }
 const PIPER_SERVER_URL  = 'http://127.0.0.1:5005';
 const XTTS_SERVER_URL   = 'http://127.0.0.1:5006';
@@ -828,8 +840,86 @@ const KOKORO_SERVER_URL = 'http://127.0.0.1:5007';
 let __piperAvailable  = null;  // null = inconnu, true/false = testé
 let __xttsAvailable   = null;
 let __kokoroAvailable = null;
+let __podAvailable    = null;
 let __xttsVoices      = [];    // liste dynamique des voix clonées XTTS
 let __kokoroVoices    = [];    // liste dynamique des voix Kokoro (FR par défaut)
+let __podVoices       = [];    // liste dynamique des voix servies par le pod GPU
+let __podTimerInterval = null; // setInterval du chrono pod, un seul à la fois
+
+// URL du pod GPU (change à chaque nouveau pod — pas de constante fixe comme les autres)
+function getPodUrl() {
+  return (localStorage.getItem('epubson_pod_url') || '').trim().replace(/\/+$/, '');
+}
+function setPodUrl(url) {
+  localStorage.setItem('epubson_pod_url', url.trim().replace(/\/+$/, ''));
+  __podAvailable = null;
+  __podVoices = [];
+}
+function savePodUrl() {
+  const input = document.getElementById('podUrlInput');
+  if (!input) return;
+  setPodUrl(input.value);
+  buildVoiceGrid();
+}
+
+// ── Suivi de coût pod GPU — 100% local, aucun appel à l'API RunPod ──
+// (l'API RunPod ne supporte pas les appels navigateur en CORS, et exposer
+// une clé API RunPod côté client serait risqué — voir décision utilisateur)
+function getPodRate() {
+  return parseFloat(localStorage.getItem('epubson_pod_rate') || '0.63');
+}
+function setPodRate(v) {
+  const f = parseFloat(v);
+  localStorage.setItem('epubson_pod_rate', String(isNaN(f) ? 0.63 : f));
+  updatePodTimerDisplay();
+}
+function getPodSessionStart() {
+  const v = localStorage.getItem('epubson_pod_session_start');
+  return v ? parseInt(v, 10) : null;
+}
+function getPodTotalSpent() {
+  return parseFloat(localStorage.getItem('epubson_pod_total_spent') || '0');
+}
+function startPodSession() {
+  localStorage.setItem('epubson_pod_session_start', String(Date.now()));
+  buildVoiceGrid();
+}
+function stopPodSession() {
+  const start = getPodSessionStart();
+  if (start) {
+    const elapsedH = (Date.now() - start) / 3_600_000;
+    const cost = elapsedH * getPodRate();
+    localStorage.setItem('epubson_pod_total_spent', String(getPodTotalSpent() + cost));
+  }
+  localStorage.removeItem('epubson_pod_session_start');
+  buildVoiceGrid();
+}
+function resetPodTotalSpent() {
+  if (!confirm('Remettre à zéro le total cumulé du pod GPU ?')) return;
+  localStorage.setItem('epubson_pod_total_spent', '0');
+  buildVoiceGrid();
+}
+function updatePodTimerDisplay() {
+  const elLabel = document.getElementById('podElapsed');
+  const elCost  = document.getElementById('podSessionCost');
+  if (!elLabel || !elCost) {
+    if (__podTimerInterval) { clearInterval(__podTimerInterval); __podTimerInterval = null; }
+    return;
+  }
+  const start = getPodSessionStart();
+  if (!start) { elLabel.textContent = '—'; elCost.textContent = '—'; return; }
+  const elapsedMs = Date.now() - start;
+  const h = Math.floor(elapsedMs / 3600000);
+  const m = Math.floor((elapsedMs % 3600000) / 60000);
+  const s = Math.floor((elapsedMs % 60000) / 1000);
+  elLabel.textContent = `${h}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+  elCost.textContent = ((elapsedMs / 3600000) * getPodRate()).toFixed(3) + ' €';
+}
+function testPodVoice(btnEl) {
+  const pv = __podVoices[0];
+  if (!pv) { alert("Aucune voix disponible sur le pod — vérifie l'URL et que le serveur tourne (fm_drow_pod_server.py)."); return; }
+  testVoice({ name: `pod:${pv.name}`, label: pv.label || pv.name }, btnEl);
+}
 
 // Paramètres prosodie Piper — persistants localStorage
 function getPiperParams() {
@@ -942,6 +1032,10 @@ xttsHealthCheck().then(ok => {
 });
 kokoroHealthCheck().then(ok => {
   console.log('[Kokoro] disponible =', ok, '· voix=', __kokoroVoices.length);
+  buildVoiceGrid();
+});
+podHealthCheck().then(ok => {
+  console.log('[Pod GPU] disponible =', ok, '· voix=', __podVoices.length);
   buildVoiceGrid();
 });
 if (gcpApiKey && claudeApiKey) showStep2();
@@ -1193,6 +1287,49 @@ function buildVoiceGrid() {
     </div>
   `;
   grid.appendChild(xttsBanner);
+
+  // ── Bandeau Pod GPU (fm_drow, friture CPU corrigée en tournant sur GPU distant) ──
+  const podBanner = document.createElement('div');
+  podBanner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:rgba(96,165,250,0.06);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);margin-bottom:8px';
+  const podStatus = __podAvailable === null ? (getPodUrl() ? '⏳ détection…' : '⚪ URL non renseignée')
+                   : __podAvailable ? `✅ <strong style="color:var(--green)">en ligne</strong> · ${__podVoices.length} voix`
+                                     : '⚠ <strong style="color:#fbbf24">injoignable</strong> (pod éteint ou URL invalide ?)';
+  const podRunning = !!getPodSessionStart();
+  podBanner.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <span style="flex:1">🚀 <strong style="color:var(--ink)">Pod GPU (fm_drow, cloud, payant à l'usage)</strong> · ${podStatus}</span>
+      <button onclick="reconnectPodServer(this)" style="background:transparent;border:1px solid var(--border);color:var(--ink);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">🔄 Reconnecter</button>
+      ${__podAvailable ? '<button onclick="shutdownPodServer(this)" style="background:transparent;border:1px solid var(--border);color:#fca5a5;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">⏹ Arrêter serveur</button>' : ''}
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input type="text" id="podUrlInput" placeholder="https://xxxx-5008.proxy.runpod.net" value="${getPodUrl()}"
+             style="flex:1;padding:8px 10px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">
+      <button onclick="savePodUrl()" style="background:transparent;border:1px solid var(--border);color:var(--ink);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">💾 Enregistrer</button>
+      <button class="vc-test-btn" style="position:static;flex-shrink:0" onclick="testPodVoice(this)" title="Écouter un extrait avec fm_drow" ${__podAvailable ? '' : 'disabled'}>🔊 Tester</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--border);font-size:11px">
+      <strong style="color:var(--ink);font-size:11px">💶 Suivi de coût (manuel — l'appli ne pilote pas le pod) :</strong>
+      <label style="display:flex;align-items:center;gap:6px">
+        <span>Tarif €/h</span>
+        <input type="number" min="0" step="0.01" value="${getPodRate().toFixed(2)}" oninput="setPodRate(this.value)" style="width:60px;padding:4px 6px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:4px;color:var(--ink)">
+      </label>
+      ${podRunning
+        ? `<span>⏱ <strong id="podElapsed" style="color:var(--ink)">—</strong> · <strong id="podSessionCost" style="color:var(--ink)">—</strong></span>
+           <button onclick="stopPodSession()" style="background:transparent;border:1px solid var(--border);color:#fca5a5;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:10px">⏹ Pod arrêté</button>`
+        : `<button onclick="startPodSession()" style="background:transparent;border:1px solid var(--border);color:var(--green);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:10px">▶ Pod démarré</button>`
+      }
+      <span style="margin-left:auto">Total cumulé : <strong style="color:var(--ink)">${getPodTotalSpent().toFixed(2)} €</strong>
+        <button onclick="resetPodTotalSpent()" title="Remettre à zéro" style="background:transparent;border:none;color:var(--ink-dim);cursor:pointer;font-size:11px">🗑</button>
+      </span>
+    </div>
+    <div style="font-size:10px;opacity:.7;margin-top:6px">Démarre/arrête le pod toi-même dans l'UI RunPod — ce chrono est juste un pense-bête local, pas une commande réelle.</div>
+  `;
+  grid.appendChild(podBanner);
+  if (__podTimerInterval) { clearInterval(__podTimerInterval); __podTimerInterval = null; }
+  if (podRunning) {
+    updatePodTimerDisplay();
+    __podTimerInterval = setInterval(updatePodTimerDisplay, 1000);
+  }
 
   // ── Cartes de voix XTTS dynamiques ──────────────────────────────────
   if (__xttsAvailable && __xttsVoices.length > 0) {
@@ -3793,13 +3930,102 @@ async function kokoroTTS(ssml, retries = 3) {
   }
 }
 
-// Dispatcher principal — Google / Piper / XTTS / Kokoro selon la voix sélectionnée
+// ─── Pod GPU (fm_drow) ──────────────────────────────────────────────
+// Contrairement aux autres backends locaux, l'URL n'est pas fixe : elle
+// change à chaque nouveau pod RunPod. Voir getPodUrl()/setPodUrl() plus haut.
+async function podHealthCheck() {
+  const url = getPodUrl();
+  if (!url) { __podAvailable = false; return false; }
+  if (__podAvailable !== null) return __podAvailable;
+  try {
+    const r = await fetch(`${url}/health`, { method:'GET', signal: AbortSignal.timeout(5000) });
+    if (r.ok) {
+      const data = await r.json();
+      __podVoices = data.voices || [];
+      __podAvailable = true;
+      console.log('[Pod GPU] serveur OK ·', __podVoices.length, 'voix ·', data.device || '?');
+    } else {
+      __podAvailable = false;
+    }
+  } catch (_) {
+    __podAvailable = false;
+  }
+  return __podAvailable;
+}
+
+async function reconnectPodServer(btn) {
+  if (btn) btn.disabled = true;
+  __podAvailable = null;
+  await podHealthCheck();
+  if (btn) btn.disabled = false;
+  buildVoiceGrid && buildVoiceGrid();
+}
+
+async function shutdownPodServer(btn) {
+  const url = getPodUrl();
+  if (!url) return;
+  if (btn) btn.disabled = true;
+  try { await fetch(`${url}/shutdown`, { method:'POST' }); } catch(_) {}
+  __podAvailable = null;
+  __podVoices = [];
+  if (btn) btn.disabled = false;
+  buildVoiceGrid && buildVoiceGrid();
+}
+
+async function podTTS(ssml, retries = 3) {
+  const voice = getVoiceObj(selectedVoice);
+  if (!voice || voice.backend !== 'pod') throw new Error('Voix non Pod GPU');
+  const url = getPodUrl();
+  if (!url) throw new Error("URL du pod non renseignée.");
+  const text = stripSSMLForPiper(ssml);
+  if (!text) throw new Error('Texte vide après strip SSML');
+
+  const cacheHash = await ttsCacheKey(text, selectedVoice, { backend:'pod' });
+  const cached = await ttsCacheGet(cacheHash);
+  if (cached && cached.audio) {
+    __ttsCacheStats.hits++;
+    __ttsCacheStats.savedChars += cached.chars || text.length;
+    return cached.audio;
+  }
+  __ttsCacheStats.misses++;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const r = await fetch(`${url}/tts`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ text, voice: voice.podVoice, speed: 1.0 }),
+      });
+      if (!r.ok) {
+        const err = await r.text();
+        throw new Error(`Pod ${r.status} : ${err}`);
+      }
+      const audioBuffer = await r.arrayBuffer();
+      await ttsCachePut(cacheHash, audioBuffer, text.length, selectedVoice);
+      return audioBuffer;
+    } catch (e) {
+      if (aborted) throw new Error('Aborted');
+      if (attempt === retries - 1) {
+        if (e.message?.includes('Failed to fetch')) {
+          throw new Error("Pod inaccessible. Vérifie qu'il tourne et que l'URL est correcte.");
+        }
+        throw e;
+      }
+      await sleep(1000 * (attempt + 1));
+    }
+  }
+}
+
+// Dispatcher principal — Google / Piper / XTTS / Kokoro / Pod GPU selon la voix sélectionnée
 async function synthesize(ssml, retries) {
   if (isXttsVoice(selectedVoice)) {
     return await xttsTTS(ssml, Math.min(retries || 3, 3));
   }
   if (isPiperVoice(selectedVoice)) {
     return await piperTTS(ssml, Math.min(retries || 3, 3));
+  }
+  if (isPodVoice(selectedVoice)) {
+    return await podTTS(ssml, Math.min(retries || 3, 3));
   }
   if (isKokoroVoice(selectedVoice)) {
     return await kokoroTTS(ssml, Math.min(retries || 3, 3));
