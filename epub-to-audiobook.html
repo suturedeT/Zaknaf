@@ -950,6 +950,7 @@ function setPiperParam(k, v) {
 let gcpApiKey    = localStorage.getItem('epubson_gcp') || '';
 let claudeApiKey = localStorage.getItem('epubson_claude') || '';
 let selectedVoice = localStorage.getItem('epubson_voice') || 'fr-FR-Standard-C';
+let __currentVoiceAudio = null; // lecture en cours du bouton "Tester" une voix
 // Voix premium (Chirp3-HD, Studio, etc.) verrouillées par défaut.
 // Déverrouillable via le bouton 🔓 au-dessus de la grille.
 function isPremiumVoice(name) {
@@ -1038,7 +1039,9 @@ podHealthCheck().then(ok => {
   console.log('[Pod GPU] disponible =', ok, '· voix=', __podVoices.length);
   buildVoiceGrid();
 });
-if (gcpApiKey && claudeApiKey) showStep2();
+// Le picker de voix (et les backends locaux Piper/XTTS/Kokoro, 0 clé requise)
+// doit rester accessible meme sans cles Google/Claude deja validees.
+showStep2();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VOICE GRID
@@ -1151,7 +1154,10 @@ function buildSourceDropdowns() {
           <label style="font-size:11px;color:var(--ink-dim)">🌸 Kokoro (ONNX)</label>
           ${kokoroStatus}
         </div>
-        <select id="ddKokoro" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__kokoroAvailable === false ? 'disabled' : ''}>${kokoroOpts}</select>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="ddKokoro" style="${selectStyle}" onchange="selectVoiceFromDropdown(this.value)" ${__kokoroAvailable === false ? 'disabled' : ''}>${kokoroOpts}</select>
+          <button class="vc-test-btn" style="position:static;flex-shrink:0" onclick="testKokoroVoice(this)" title="Écouter un extrait avec la voix Kokoro sélectionnée" ${__kokoroAvailable ? '' : 'disabled'}>🔊 Tester</button>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
           <label style="font-size:10px;color:var(--ink-dim);min-width:48px">Vitesse</label>
           <input type="range" id="kokoroSpeed" min="0.70" max="1.20" step="0.05"
@@ -1176,6 +1182,15 @@ function selectVoiceFromDropdown(name) {
   updateCostEstimate && updateCostEstimate();
   refreshCachePanel && refreshCachePanel();
   refreshQuotaPanel && refreshQuotaPanel();
+}
+
+// Bouton "Tester" du dropdown Kokoro : joue un extrait avec la voix sélectionnée
+function testKokoroVoice(btnEl) {
+  const ddVal = document.getElementById('ddKokoro')?.value;
+  const vname = ddVal ? ddVal.slice(7) : (__kokoroVoices[0] && __kokoroVoices[0].name);
+  const kv = __kokoroVoices.find(x => x.name === vname) || __kokoroVoices[0];
+  if (!kv) { alert('Aucune voix Kokoro disponible — lance start_kokoro.bat.'); return; }
+  testVoice({ name: `kokoro:${kv.name}`, label: kv.label || kv.name }, btnEl);
 }
 
 // Callback slider vitesse Kokoro : persiste et met à jour l'affichage
@@ -1416,7 +1431,6 @@ function buildVoiceGrid() {
 // Texte court (~140 chars) → quasi-gratuit même en Chirp3-HD (~0.4 centime).
 // Servi par le cache IndexedDB existant : 2e clic = totalement gratuit.
 const VOICE_TEST_SAMPLE = `Bonjour, je serai votre narrateur pour ce livre audio. Voici un extrait pour que vous puissiez juger ma voix avant de commencer.`;
-let __currentVoiceAudio = null;
 
 async function testVoice(voice, btnEl) {
   // Stoppe une lecture en cours si on clique sur un autre bouton
@@ -1428,7 +1442,7 @@ async function testVoice(voice, btnEl) {
     });
     __currentVoiceAudio = null;
   }
-  if (!gcpApiKey) {
+  if (!isLocalBackend(voice.name) && !gcpApiKey) {
     alert('Saisis ta clé Google Cloud d\'abord.');
     return;
   }
@@ -1547,7 +1561,10 @@ function showStep2() {
 // ─────────────────────────────────────────────────────────────────────────────
 // EPUB DROP
 // ─────────────────────────────────────────────────────────────────────────────
+let __dropSetupDone = false;
 function setupDrop() {
+  if (__dropSetupDone) return;
+  __dropSetupDone = true;
   const dz = document.getElementById('dropzone');
   const fi = document.getElementById('fileInput');
   dz.addEventListener('click', () => fi.click());
