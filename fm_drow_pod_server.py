@@ -89,6 +89,12 @@ def load_model():
             print(f"  ! CUDA indisponible, repli sur '{device}' (friture probable)")
         from fm_drow import load
         _pipeline, _voice = load(device=device)
+        # Bug kokoro : isinstance(voice, torch.FloatTensor) ne reconnaît que les
+        # tenseurs CPU. Un voicepack chargé directement sur 'cuda' échappe à ce
+        # test et fait planter load_voice(). On le garde en CPU ; le pipeline le
+        # déplace lui-même sur le bon device via .to(model.device) à chaque appel.
+        if device == 'cuda':
+            _voice = _voice.cpu()
         _device_used = device
         print(f"  OK fm_drow charge sur '{device}'")
         if device == 'cuda':
