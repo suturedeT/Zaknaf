@@ -524,9 +524,14 @@ def synth():
 
     if voice == 'fm_drow':
         # fm_drow a son propre G2P (misaki/espeak) entraîné sur du texte FR
-        # normal : les hacks ci-dessous (virgule -> '!!!', liaisons par trait
-        # d'union) sont spécifiques au moteur ONNX/espeak et dégradent fm_drow.
+        # normal : les hacks de liaison (virgule -> '!!!', trait d'union) sont
+        # spécifiques au moteur ONNX/espeak et dégradent fm_drow. Mais les
+        # corrections de prononciation (respelling) restent valables : misaki
+        # passe aussi par espeak-ng en interne, donc les mêmes mots posent
+        # les mêmes problèmes de nasalisation.
         text = re.sub(r'\s+', ' ', raw_text).strip()
+        for pattern, repl in WORD_PRONUNCIATION_FIXES:
+            text = pattern.sub(repl, text)
     else:
         text = sanitize_text(raw_text)
         if apply_liaisons and lang.startswith('fr'):
