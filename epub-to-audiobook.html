@@ -3905,8 +3905,11 @@ async function kokoroTTS(ssml, retries = 3) {
   if (!voice || voice.backend !== 'kokoro') throw new Error('Voix non Kokoro');
   const text = stripSSMLForPiper(ssml);  // strip SSML, Kokoro veut du plain text
   if (!text) throw new Error('Texte vide après strip SSML');
+  const speed = parseFloat(localStorage.getItem('epubson_kokoro_speed') || '1.05');
 
-  const cacheHash = await ttsCacheKey(text, selectedVoice, { backend:'kokoro' });
+  // La vitesse fait partie de la clé de cache : sinon le bouton "Tester"
+  // rejoue toujours le 1er extrait généré, même après avoir bougé le curseur.
+  const cacheHash = await ttsCacheKey(text, selectedVoice, { backend:'kokoro', speed });
   const cached = await ttsCacheGet(cacheHash);
   if (cached && cached.audio) {
     __ttsCacheStats.hits++;
@@ -3924,7 +3927,7 @@ async function kokoroTTS(ssml, retries = 3) {
           text,
           voice: voice.kokoroVoice,
           language: 'fr-fr',
-          speed: parseFloat(localStorage.getItem('epubson_kokoro_speed') || '1.05'),
+          speed,
         }),
       });
       if (!r.ok) {
