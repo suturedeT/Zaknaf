@@ -87,6 +87,8 @@ PORT = 5005
 VOICE_NAMES = [
     'fr_FR-upmc-medium',
     'fr_FR-tom-medium',  # voix mâle FR douce (alternative à Pierre rocailleux)
+    'fr_FR-mls-medium',  # multi-speaker (125 voix) entraîné sur audiobooks Librivox FR
+    'fr_FR-mls_1840-low',  # mono-speaker dédié au lecteur LibriVox 1840 (le plus populaire)
 ]
 
 # ── Liaisons françaises forcées ───────────────────────────────────────
@@ -131,8 +133,18 @@ H_ASPIRE = {'haricot','héros','hibou','hache','haie','haine','hâte','haut','ha
             'hocher','homard','hongrois','honte','hotte','houblon','hublot','huit',
             'hurler','hutte','huit'}
 
+# ── Mots mal prononcés par espeak FR (nasalisation erronée, etc.) ──
+# "chaman" -> nasale finale /ɑ̃/ par défaut chez espeak, alors qu'il faut
+# /an/ non-nasal. Respeller en "chamane" force la bonne prononciation.
+WORD_PRONUNCIATION_FIXES = [
+    (re.compile(r'\bchaman(s?)\b', re.IGNORECASE), r'chamane\1'),
+]
+
+
 def apply_french_liaisons(text):
     """Insère des hyphens pour forcer les liaisons obligatoires françaises."""
+    for pattern, repl in WORD_PRONUNCIATION_FIXES:
+        text = pattern.sub(repl, text)
     for pattern, repl in LIAISON_RULES:
         text = pattern.sub(repl, text)
     # Annule les fausses liaisons sur h-aspiré : "les héros" → "les-héros" → "les héros"

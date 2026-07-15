@@ -176,12 +176,22 @@ ESPEAK_LIAISON_FIXES = [
     (re.compile(rf'\bdoit\s+([{V}])', re.IGNORECASE), r'doitt \1'),
 ]
 
+# ── Mots mal prononcés par espeak FR (nasalisation erronée, etc.) ──
+# "chaman" -> nasale finale /ɑ̃/ par défaut chez espeak, alors qu'il faut
+# /an/ non-nasal. Respeller en "chamane" force la bonne prononciation.
+WORD_PRONUNCIATION_FIXES = [
+    (re.compile(r'\bchaman(s?)\b', re.IGNORECASE), r'chamane\1'),
+]
+
 
 def apply_french_liaisons(text):
-    # 1) Pré-corrections pour mots où espeak rate la liaison nativement
+    # 1) Mots simplement mal prononcés (respelling phonétique)
+    for pattern, repl in WORD_PRONUNCIATION_FIXES:
+        text = pattern.sub(repl, text)
+    # 2) Pré-corrections pour mots où espeak rate la liaison nativement
     for pattern, repl in ESPEAK_LIAISON_FIXES:
         text = pattern.sub(repl, text)
-    # 2) Règles génériques (trait d'union pour fusion phonétique)
+    # 3) Règles génériques (trait d'union pour fusion phonétique)
     for pattern, repl in LIAISON_RULES:
         text = pattern.sub(repl, text)
     for h in H_ASPIRE:
