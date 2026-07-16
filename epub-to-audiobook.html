@@ -1742,9 +1742,12 @@ function updateCostEstimate() {
     el.innerHTML = `Sélectionne au moins un chapitre pour voir l'estimation…`;
     return;
   }
-  // Backend local (Piper ou XTTS) = gratuit, on saute le calcul Google
+  // Backend local (Piper, XTTS, Kokoro, Pod GPU) = gratuit, on saute le calcul Google
   if (isLocalBackend(selectedVoice)) {
-    const label = isXttsVoice(selectedVoice) ? '💜 Backend XTTS-v2 (voice cloning)' : '🟡 Backend Piper local';
+    const label = isXttsVoice(selectedVoice) ? '💜 Backend XTTS-v2 (voice cloning)'
+                : isPodVoice(selectedVoice)  ? '🚀 Backend Pod GPU (fm_drow)'
+                : isKokoroVoice(selectedVoice) ? '🌸 Backend Kokoro local'
+                : '🟡 Backend Piper local';
     el.innerHTML = `
       <strong style="color:var(--ink)">${label}</strong> &nbsp;·&nbsp;
       ${totalChapters} chapitre${totalChapters>1?'s':''} · <strong>${totalChars.toLocaleString('fr')}</strong> caractères<br>
