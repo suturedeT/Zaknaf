@@ -3540,6 +3540,11 @@ let __resumeDB = null;
 function openResumeDB() {
   if (__resumeDB) return Promise.resolve(__resumeDB);
   return new Promise((resolve, reject) => {
+    // Filet de sécurité : sans onblocked, un indexedDB.open() bloqué par une
+    // autre connexion (ex: un autre onglet de l'appli resté ouvert) ne
+    // résout ni ne rejette JAMAIS -- ça gèlerait silencieusement le premier
+    // saveResumeChapter() de la conversion, indiscernable d'un vrai freeze.
+    const timeoutId = setTimeout(() => reject(new Error('indexedDB.open timeout (bloqué par un autre onglet ?)')), 5000);
     const req = indexedDB.open(RESUME_DB, 1);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -3550,8 +3555,9 @@ function openResumeDB() {
         db.createObjectStore(RESUME_CHAPTERS_STORE, { keyPath: 'ci' });
       }
     };
-    req.onsuccess = () => { __resumeDB = req.result; resolve(__resumeDB); };
-    req.onerror   = () => reject(req.error);
+    req.onsuccess = () => { clearTimeout(timeoutId); __resumeDB = req.result; resolve(__resumeDB); };
+    req.onerror   = () => { clearTimeout(timeoutId); reject(req.error); };
+    req.onblocked = () => console.error('[Resume] indexedDB.open bloqué -- un autre onglet a peut-être une version différente ouverte');
   });
 }
 
@@ -3562,9 +3568,9 @@ async function getResumeMeta() {
       const tx = db.transaction(RESUME_META_STORE, 'readonly');
       const req = tx.objectStore(RESUME_META_STORE).get('current');
       req.onsuccess = () => resolve(req.result || null);
-      req.onerror   = () => resolve(null);
+      req.onerror   = () => { console.error('[Resume] échec getResumeMeta :', req.error); resolve(null); };
     });
-  } catch (_) { return null; }
+  } catch (e) { console.error('[Resume] exception getResumeMeta :', e); return null; }
 }
 
 async function saveResumeMeta(meta) {
@@ -3574,9 +3580,9 @@ async function saveResumeMeta(meta) {
       const tx = db.transaction(RESUME_META_STORE, 'readwrite');
       tx.objectStore(RESUME_META_STORE).put({ id: 'current', ...meta });
       tx.oncomplete = () => resolve();
-      tx.onerror    = () => resolve();
+      tx.onerror    = () => { console.error('[Resume] échec saveResumeMeta :', tx.error); resolve(); };
     });
-  } catch (_) {}
+  } catch (e) { console.error('[Resume] exception saveResumeMeta :', e); }
 }
 
 // Stocke UNIQUEMENT les trames produites par ce chapitre (pas tout le
@@ -3588,9 +3594,9 @@ async function saveResumeChapter(ci, frames, chapterMark, elapsedMsEnd, samplesA
       const tx = db.transaction(RESUME_CHAPTERS_STORE, 'readwrite');
       tx.objectStore(RESUME_CHAPTERS_STORE).put({ ci, frames, chapterMark, elapsedMsEnd, samplesAdded, sentencesAdded, timestampUsEnd });
       tx.oncomplete = () => resolve();
-      tx.onerror    = () => resolve();
+      tx.onerror    = () => { console.error(`[Resume] échec saveResumeChapter ci=${ci} :`, tx.error); resolve(); };
     });
-  } catch (_) {}
+  } catch (e) { console.error(`[Resume] exception saveResumeChapter ci=${ci} :`, e); }
 }
 
 async function loadResumeChapters() {
@@ -3600,9 +3606,9 @@ async function loadResumeChapters() {
       const tx = db.transaction(RESUME_CHAPTERS_STORE, 'readonly');
       const req = tx.objectStore(RESUME_CHAPTERS_STORE).getAll();
       req.onsuccess = () => resolve((req.result || []).sort((a,b) => a.ci - b.ci));
-      req.onerror   = () => resolve([]);
+      req.onerror   = () => { console.error('[Resume] échec loadResumeChapters :', req.error); resolve([]); };
     });
-  } catch (_) { return []; }
+  } catch (e) { console.error('[Resume] exception loadResumeChapters :', e); return []; }
 }
 
 async function clearResumeCheckpoint() {
@@ -3613,9 +3619,9 @@ async function clearResumeCheckpoint() {
       tx.objectStore(RESUME_META_STORE).clear();
       tx.objectStore(RESUME_CHAPTERS_STORE).clear();
       tx.oncomplete = () => resolve();
-      tx.onerror    = () => resolve();
+      tx.onerror    = () => { console.error('[Resume] échec clearResumeCheckpoint :', tx.error); resolve(); };
     });
-  } catch (_) {}
+  } catch (e) { console.error('[Resume] exception clearResumeCheckpoint :', e); }
   const banner = document.getElementById('resumeBanner');
   if (banner) banner.remove();
 }
