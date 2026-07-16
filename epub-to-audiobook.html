@@ -1304,7 +1304,8 @@ function buildVoiceGrid() {
   `;
   grid.appendChild(xttsBanner);
 
-  // ── Bandeau Pod GPU (fm_drow, friture CPU corrigée en tournant sur GPU distant) ──
+  // ── Bandeau Pod GPU (fm_drow — qualité OK en CPU depuis le correctif weight_norm,
+  // le pod sert surtout à accélérer les gros livres, ~30x plus rapide qu'en CPU) ──
   const podBanner = document.createElement('div');
   podBanner.style.cssText = 'grid-column:1/-1;padding:10px 14px;background:rgba(96,165,250,0.06);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--ink-dim);margin-bottom:8px';
   const podStatus = __podAvailable === null ? (getPodUrl() ? '⏳ détection…' : '⚪ URL non renseignée')

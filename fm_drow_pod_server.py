@@ -3,10 +3,15 @@
 """
 Serveur fm_drow GPU — à lancer SUR un pod cloud (RunPod ou équivalent), pas en local.
 
-Contexte : fm_drow (Kokoro-82M fine-tuné FR) produit une friture systématique en
-inférence CPU sur ce PC (plancher de bruit ~2500x plus élevé qu'en GPU, mesuré et
-confirmé). Ce serveur reprend le même loader (fm_drow.py) mais sur device="cuda",
-qui a été validé propre pendant l'entraînement sur RunPod.
+Contexte historique : une friture systématique avait été observée en CPU, d'abord
+attribuée à une divergence numérique CPU/GPU. Root cause réelle trouvée ensuite :
+fm_drow.pth stockait les couches weight_norm au format PyTorch récent
+(parametrizations.weight.original0/1) alors que KModel attend l'ancien format
+(weight_g/weight_v) — le chargement strict=False avalait l'erreur silencieusement,
+laissant ~318 paramètres du décodeur à leur valeur aléatoire d'initialisation.
+Corrigé directement dans fm_drow.pth (renommage des clés) — la voix est désormais
+propre en CPU ET en GPU. Ce serveur GPU garde son utilité pour la VITESSE (rendu
+~30x plus rapide qu'en CPU) sur de gros livres, plus pour corriger la qualité.
 
 ────────────────────────────────────────────────────────────────────────
 INSTALLATION SUR LE POD (une fois par pod)
@@ -86,7 +91,7 @@ def load_model():
         import torch
         device = DEVICE if (DEVICE != 'cuda' or torch.cuda.is_available()) else 'cpu'
         if device != DEVICE:
-            print(f"  ! CUDA indisponible, repli sur '{device}' (friture probable)")
+            print(f"  ! CUDA indisponible, repli sur '{device}' (plus lent, mais qualité OK depuis le correctif weight_norm)")
         from fm_drow import load
         _pipeline, _voice = load(device=device)
         # Bug kokoro : isinstance(voice, torch.FloatTensor) ne reconnaît que les
