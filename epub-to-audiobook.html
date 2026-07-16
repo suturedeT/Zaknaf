@@ -2495,7 +2495,14 @@ async function startConversion() {
         && resumeMeta.selectedVoice === selectedVoice
         && JSON.stringify(resumeMeta.chapterTitles) === JSON.stringify(chapterTitles)) {
       const resumeChapters = await loadResumeChapters();
-      if (resumeChapters.length > 0 && resumeChapters[resumeChapters.length - 1].ci === resumeMeta.lastCompletedChapter) {
+      // Vérifie une couverture COMPLÈTE et CONTIGUË de 0 à lastCompletedChapter
+      // (pas juste que le dernier index correspond) : un chapitre manquant au
+      // milieu (ex: écriture ratée sur un chapitre précédent) ferait sinon
+      // sauter silencieusement son contenu au montage final.
+      const expectedCount = resumeMeta.lastCompletedChapter + 1;
+      const isContiguous = resumeChapters.length === expectedCount
+        && resumeChapters.every((rc, idx) => rc.ci === idx);
+      if (isContiguous) {
         for (const rc of resumeChapters) {
           aacFrames.push(...rc.frames);
           chapterMarks.push(rc.chapterMark);
@@ -2509,6 +2516,11 @@ async function startConversion() {
         const banner = document.getElementById('resumeBanner');
         if (banner) banner.remove();
         log(`↻ Reprise détectée — chapitres 1-${resumeMeta.lastCompletedChapter + 1} restaurés, poursuite au chapitre ${resumeStartCi + 1}/${totalChapters}`, 'ok');
+      } else if (resumeChapters.length > 0) {
+        // Checkpoint corrompu/incomplet (chapitre manquant) : on refuse la
+        // reprise plutôt que de produire un livre avec un trou silencieux.
+        log(`⚠ Checkpoint de reprise incomplet (${resumeChapters.length}/${expectedCount} chapitres retrouvés, attendu 0-${resumeMeta.lastCompletedChapter} sans trou) — redémarrage complet du livre pour éviter un contenu manquant`, 'err');
+        await clearResumeCheckpoint();
       }
     }
   }
