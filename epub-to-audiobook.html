@@ -2614,11 +2614,14 @@ async function startConversion() {
       }
     } else {
       // Concurrence adaptée au backend :
-      // - Kokoro local : 1 (Lock serveur -> parallèle inutile et peut crasher
-      //   le Flask sous saturation thread/preflight OPTIONS spammeux)
-      // - Piper local : 2 (Piper est plus tolérant mais reste local)
+      // - Kokoro ONNX (ff_siwis, fm_george...) : 2 (le serveur a maintenant
+      //   un pool de 2 instances indépendantes -> parallélisme réel)
+      // - fm_drow : 1 (moteur PyTorch séparé, toujours sérialisé côté serveur)
+      // - Piper local : 4 (Piper est plus tolérant, reste local)
       // - Google API   : 4 (cloud, supporte le parallèle)
-      const effectiveConcurrency = isKokoroVoice(selectedVoice) ? 1
+      const isKokoroDrow = selectedVoice === 'kokoro:fm_drow';
+      const effectiveConcurrency = isKokoroDrow ? 1
+                                 : isKokoroVoice(selectedVoice) ? 2
                                  : isPiperVoice(selectedVoice)  ? 4
                                  : CONCURRENCY;
       for (let i = 0; i < total; i += effectiveConcurrency) {

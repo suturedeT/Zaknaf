@@ -304,10 +304,48 @@ if not os.path.isfile(VOICES_PATH):
 
 print(f"  Modèle  : {os.path.basename(MODEL_PATH)} ({os.path.getsize(MODEL_PATH) // (1024*1024)} Mo)")
 print(f"  Voices  : {os.path.basename(VOICES_PATH)} ({os.path.getsize(VOICES_PATH) // (1024*1024)} Mo)")
-print(f"  Chargement en cours...", flush=True)
 
+# ── Pool d'instances Kokoro indépendantes (parallélisme réel) ───────────
+# Avant : un seul objet Kokoro + un lock global -> tout était sérialisé,
+# même en envoyant des requêtes en parallèle (elles faisaient juste la
+# queue derrière le lock). Cause du lock : kokoro_onnx a un état interne
+# partagé qui se corrompt sous appels concurrents sur LE MÊME objet
+# (mots mélangés entre requêtes voisines). Solution : plusieurs instances
+# INDÉPENDANTES (chacune son propre état), une seule requête à la fois
+# PAR instance -> plus de risque de mélange, tout en autorisant N requêtes
+# simultanées au total.
+#
+# Chaque instance ONNX utilise par défaut tous les cœurs CPU en intra-op
+# threading -> avec plusieurs instances en parallèle ça se marcherait
+# dessus. On monkey-patch InferenceSession pour bornez chaque instance à
+# (cœurs physiques / nb workers) threads.
+NUM_KOKORO_WORKERS = int(os.environ.get('KOKORO_WORKERS', '2'))
+_cpu_count = os.cpu_count() or 4
+_INTRA_OP_THREADS = max(1, _cpu_count // NUM_KOKORO_WORKERS)
+
+import onnxruntime as _ort
+_ORIG_INFERENCE_SESSION = _ort.InferenceSession
+
+def _threaded_inference_session(model_path, providers=None, **kwargs):
+    so = _ort.SessionOptions()
+    so.intra_op_num_threads = _INTRA_OP_THREADS
+    so.inter_op_num_threads = 1
+    return _ORIG_INFERENCE_SESSION(model_path, sess_options=so, providers=providers, **kwargs)
+
+_ort.InferenceSession = _threaded_inference_session
+
+print(f"  Chargement de {NUM_KOKORO_WORKERS} instance(s) Kokoro ({_INTRA_OP_THREADS} threads chacune)...", flush=True)
+
+import queue
+_kokoro_pool = queue.Queue()
 try:
-    kokoro = Kokoro(MODEL_PATH, VOICES_PATH)
+    kokoro_instances = []
+    for _i in range(NUM_KOKORO_WORKERS):
+        print(f"    instance {_i+1}/{NUM_KOKORO_WORKERS}...", flush=True)
+        _inst = Kokoro(MODEL_PATH, VOICES_PATH)
+        kokoro_instances.append(_inst)
+        _kokoro_pool.put(_inst)
+    kokoro = kokoro_instances[0]  # référence conservée pour _build_blends() (embeddings identiques sur toutes les instances)
 except Exception as e:
     print(f"\nX Erreur de chargement : {e}")
     import traceback
@@ -431,8 +469,12 @@ def voices_endpoint():
 def synth_one(text, voice, speed, lang):
     """Synthétise UN fragment, propage l'exception phonemizer si besoin.
 
-    Sérialisé via _SYNTH_LOCK : appels concurrents corrompent l'état interne
-    de kokoro_onnx (audio cross-talk entre requêtes Flask threaded).
+    Voix ONNX (ff_siwis, fm_george, ...) : empruntée au pool de N instances
+    Kokoro indépendantes -- une seule requête à la fois PAR instance (donc
+    pas de risque de mélange), mais jusqu'à N requêtes en parallèle au total.
+
+    fm_drow reste sérialisée via _SYNTH_LOCK (moteur PyTorch séparé, pas
+    encore validé en multi-instance).
 
     Si 'voice' est le nom d'un blend custom, on passe l'embedding numpy
     directement au lieu d'un nom de voix.
@@ -447,8 +489,11 @@ def synth_one(text, voice, speed, lang):
 
     # Voix custom (blend pré-calculé) -> passe l'embedding numpy
     voice_arg = __blend_cache.get(voice, voice)
-    with _SYNTH_LOCK:
-        samples, sr = kokoro.create(text, voice=voice_arg, speed=speed, lang=lang)
+    inst = _kokoro_pool.get()
+    try:
+        samples, sr = inst.create(text, voice=voice_arg, speed=speed, lang=lang)
+    finally:
+        _kokoro_pool.put(inst)
     return samples, sr
 
 
