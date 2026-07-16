@@ -2471,8 +2471,40 @@ async function startConversion() {
   // Traduction EN → FR activée ?
   const useTranslation = document.getElementById('translateToggle')?.checked === true;
 
+  // ── Reprise après freeze : si un checkpoint correspond à ce livre / cette
+  // voix / cette sélection de chapitres, on restaure l'état déjà encodé et
+  // on saute directement les chapitres déjà faits. ─────────────────────────
+  let resumeStartCi = 0;
+  {
+    const resumeMeta = await getResumeMeta();
+    const chapterTitles = selectedChapters.map(c => c.title || '');
+    if (resumeMeta
+        && resumeMeta.bookTitle === book.title
+        && resumeMeta.bookAuthor === book.author
+        && resumeMeta.totalChapters === totalChapters
+        && resumeMeta.selectedVoice === selectedVoice
+        && JSON.stringify(resumeMeta.chapterTitles) === JSON.stringify(chapterTitles)) {
+      const resumeChapters = await loadResumeChapters();
+      if (resumeChapters.length > 0 && resumeChapters[resumeChapters.length - 1].ci === resumeMeta.lastCompletedChapter) {
+        for (const rc of resumeChapters) {
+          aacFrames.push(...rc.frames);
+          chapterMarks.push(rc.chapterMark);
+          totalSamples += rc.samplesAdded;
+          totalSentences += rc.sentencesAdded;
+        }
+        const last = resumeChapters[resumeChapters.length - 1];
+        elapsedMs = last.elapsedMsEnd;
+        audioTimestampUs = last.timestampUsEnd;
+        resumeStartCi = resumeMeta.lastCompletedChapter + 1;
+        const banner = document.getElementById('resumeBanner');
+        if (banner) banner.remove();
+        log(`↻ Reprise détectée — chapitres 1-${resumeMeta.lastCompletedChapter + 1} restaurés, poursuite au chapitre ${resumeStartCi + 1}/${totalChapters}`, 'ok');
+      }
+    }
+  }
+
   // ── Boucle principale : chapitre par chapitre ─────────────────────────────
-  for (let ci = 0; ci < totalChapters; ci++) {
+  for (let ci = resumeStartCi; ci < totalChapters; ci++) {
     if (aborted) { onAbort(); return; }
     const ch = selectedChapters[ci];
     const gBase = ci / totalChapters;
@@ -2649,6 +2681,8 @@ async function startConversion() {
     log(`🎵 Encodage AAC : ${ch.title}…`,'hi');
 
     const chapterStartMs = Math.round(elapsedMs);
+    const framesBeforeChapter = aacFrames.length;
+    const samplesBeforeChapter = totalSamples;
 
     for (const seg of chPcmSegs) {
       totalSamples += seg.pcm.length;
@@ -2667,10 +2701,27 @@ async function startConversion() {
 
     chPcmSegs.length = 0; // libère PCM
 
-    chapterMarks.push({
+    const chapterMark = {
       title: ch.title || `Chapitre ${ci+1}`,
       startMs: chapterStartMs,
       endMs: Math.round(elapsedMs),
+    };
+    chapterMarks.push(chapterMark);
+
+    // Checkpoint de reprise : ne stocke que les trames de CE chapitre (pas
+    // tout le tableau), donc coût borné même sur un livre à 40+ chapitres.
+    await saveResumeChapter(
+      ci, aacFrames.slice(framesBeforeChapter), chapterMark,
+      elapsedMs, totalSamples - samplesBeforeChapter, total, audioTimestampUs
+    );
+    await saveResumeMeta({
+      bookTitle: book.title,
+      bookAuthor: book.author,
+      totalChapters,
+      chapterTitles: selectedChapters.map(c => c.title || ''),
+      selectedVoice,
+      lastCompletedChapter: ci,
+      savedAt: Date.now(),
     });
 
     setPhaseBar(3,100); setPhase(3,'done');
@@ -2700,6 +2751,8 @@ async function startConversion() {
   log(`✓ Livre ${bookIdx+1}/${booksToProcess.length} prêt — ${sizeMB} Mo · ${durMin} min audio · ⏱ ${convStr} de conversion`,'ok');
   allResults.push({ url, title: book.title, sizeMB, durMin, convElapsedMs, ext:'m4b' });
   grandTotalSentences += totalSentences;
+  // Livre terminé avec succès : le checkpoint de reprise n'a plus lieu d'être.
+  await clearResumeCheckpoint();
   } // fin de la boucle externe sur les livres
 
   updateGlobal(1, `Terminé ! ${allResults.length} livre${allResults.length>1?'s':''}`);
@@ -3467,6 +3520,122 @@ async function ttsCacheClear() {
     __ttsCacheStats = { hits: 0, misses: 0, savedChars: 0 };
   } catch (_) {}
 }
+
+// ─── Reprise après freeze/crash (IndexedDB, checkpoint par chapitre) ────
+// Le cache TTS ci-dessus évite de refacturer Google, mais l'assemblage AAC
+// (aacFrames) ne vivait qu'en mémoire JS jusqu'à la fin du livre entier —
+// un freeze en plein milieu perdait tout le travail d'assemblage déjà fait.
+// On sauvegarde donc les trames AAC de CHAQUE chapitre terminé (pas le
+// tableau complet à chaque fois, pour éviter un coût O(n²) sur les gros
+// livres), plus un petit enregistrement "meta" qui sert à identifier si
+// une session interrompue correspond au livre/voix rechargés.
+const RESUME_DB = 'epubson-resume';
+const RESUME_META_STORE = 'meta';
+const RESUME_CHAPTERS_STORE = 'chapters';
+let __resumeDB = null;
+
+function openResumeDB() {
+  if (__resumeDB) return Promise.resolve(__resumeDB);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(RESUME_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(RESUME_META_STORE)) {
+        db.createObjectStore(RESUME_META_STORE, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(RESUME_CHAPTERS_STORE)) {
+        db.createObjectStore(RESUME_CHAPTERS_STORE, { keyPath: 'ci' });
+      }
+    };
+    req.onsuccess = () => { __resumeDB = req.result; resolve(__resumeDB); };
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function getResumeMeta() {
+  try {
+    const db = await openResumeDB();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(RESUME_META_STORE, 'readonly');
+      const req = tx.objectStore(RESUME_META_STORE).get('current');
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror   = () => resolve(null);
+    });
+  } catch (_) { return null; }
+}
+
+async function saveResumeMeta(meta) {
+  try {
+    const db = await openResumeDB();
+    await new Promise((resolve) => {
+      const tx = db.transaction(RESUME_META_STORE, 'readwrite');
+      tx.objectStore(RESUME_META_STORE).put({ id: 'current', ...meta });
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve();
+    });
+  } catch (_) {}
+}
+
+// Stocke UNIQUEMENT les trames produites par ce chapitre (pas tout le
+// tableau) : le coût d'écriture reste borné même sur un livre à 40+ chapitres.
+async function saveResumeChapter(ci, frames, chapterMark, elapsedMsEnd, samplesAdded, sentencesAdded, timestampUsEnd) {
+  try {
+    const db = await openResumeDB();
+    await new Promise((resolve) => {
+      const tx = db.transaction(RESUME_CHAPTERS_STORE, 'readwrite');
+      tx.objectStore(RESUME_CHAPTERS_STORE).put({ ci, frames, chapterMark, elapsedMsEnd, samplesAdded, sentencesAdded, timestampUsEnd });
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve();
+    });
+  } catch (_) {}
+}
+
+async function loadResumeChapters() {
+  try {
+    const db = await openResumeDB();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(RESUME_CHAPTERS_STORE, 'readonly');
+      const req = tx.objectStore(RESUME_CHAPTERS_STORE).getAll();
+      req.onsuccess = () => resolve((req.result || []).sort((a,b) => a.ci - b.ci));
+      req.onerror   = () => resolve([]);
+    });
+  } catch (_) { return []; }
+}
+
+async function clearResumeCheckpoint() {
+  try {
+    const db = await openResumeDB();
+    await new Promise((resolve) => {
+      const tx = db.transaction([RESUME_META_STORE, RESUME_CHAPTERS_STORE], 'readwrite');
+      tx.objectStore(RESUME_META_STORE).clear();
+      tx.objectStore(RESUME_CHAPTERS_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve();
+    });
+  } catch (_) {}
+  const banner = document.getElementById('resumeBanner');
+  if (banner) banner.remove();
+}
+
+// Bandeau affiché au chargement si une conversion interrompue est détectée.
+async function checkResumeOnLoad() {
+  const meta = await getResumeMeta();
+  if (!meta) return;
+  const wrap = document.getElementById('keysCard') || document.body;
+  const banner = document.createElement('div');
+  banner.id = 'resumeBanner';
+  banner.style.cssText = 'margin:16px 0;padding:14px 16px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);border-radius:8px;font-size:12px;color:var(--ink-dim)';
+  banner.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="flex:1">⏸ <strong style="color:var(--ink)">Conversion interrompue détectée</strong> — « ${meta.bookTitle} » ·
+        chapitre ${meta.lastCompletedChapter + 1}/${meta.totalChapters} complété.
+        Recharge le même ePub et relance la conversion (mêmes chapitres cochés, même voix) pour reprendre automatiquement.</span>
+      <button onclick="clearResumeCheckpoint()" style="background:transparent;border:1px solid var(--border);color:#fca5a5;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px;white-space:nowrap">🗑 Abandonner</button>
+    </div>
+  `;
+  wrap.parentNode ? wrap.parentNode.insertBefore(banner, wrap) : document.body.prepend(banner);
+}
+checkResumeOnLoad();
 
 // ─── Piper TTS (serveur local) ─────────────────────────────────────────
 // Strip toutes les balises SSML et garde uniquement le texte (les `alt` des
