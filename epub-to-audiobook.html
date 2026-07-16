@@ -409,15 +409,21 @@ header {
 
 .btn-restart:hover { color:var(--ink); border-color:var(--border-hi); }
 
-/* abort btn */
-#abortBtn {
-  display:none; width:100%; padding:10px;
-  background:none; border:1px solid rgba(252,165,165,0.2);
-  border-radius:8px; color:var(--red); font-family:'DM Sans',sans-serif;
-  font-size:12px; cursor:pointer; margin-bottom:16px; transition:all 0.2s;
+/* abort / pause btns */
+#stopBtnRow { display:none; gap:10px; margin-bottom:16px; }
+
+#abortBtn, #pauseBtn {
+  flex:1; padding:10px;
+  background:none; font-family:'DM Sans',sans-serif;
+  font-size:12px; cursor:pointer; transition:all 0.2s;
+  border-radius:8px;
 }
 
+#abortBtn { border:1px solid rgba(252,165,165,0.2); color:var(--red); }
 #abortBtn:hover { background:var(--red-dim); }
+
+#pauseBtn { border:1px solid rgba(251,191,36,0.3); color:#fbbf24; }
+#pauseBtn:hover { background:rgba(251,191,36,0.1); }
 
 .fade-in { animation:fadeIn 0.4s ease forwards; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
@@ -587,8 +593,11 @@ header {
     </button>
   </div>
 
-  <!-- Abort -->
-  <button id="abortBtn" onclick="abortConversion()">✕ Annuler la conversion</button>
+  <!-- Pause / Abort -->
+  <div id="stopBtnRow">
+    <button id="pauseBtn" onclick="pauseConversion()">⏸ Mettre en pause</button>
+    <button id="abortBtn" onclick="abortConversion()">✕ Annuler définitivement</button>
+  </div>
 
   <!-- Progress -->
   <div id="progressPanel">
@@ -2395,7 +2404,7 @@ async function startConversion() {
   aborted = false;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   document.getElementById('actionRow').style.display = 'none';
-  document.getElementById('abortBtn').style.display = 'block';
+  document.getElementById('stopBtnRow').style.display = 'flex';
   document.getElementById('progressPanel').style.display = 'block';
   document.getElementById('progressPanel').classList.add('fade-in');
 
@@ -2759,7 +2768,7 @@ async function startConversion() {
   } // fin de la boucle externe sur les livres
 
   updateGlobal(1, `Terminé ! ${allResults.length} livre${allResults.length>1?'s':''}`);
-  document.getElementById('abortBtn').style.display = 'none';
+  document.getElementById('stopBtnRow').style.display = 'none';
   await releaseWakeLock();
   const overallTitle = allResults.length === 1
     ? allResults[0].title
@@ -4826,15 +4835,46 @@ function restartApp() {
 // ─────────────────────────────────────────────────────────────────────────────
 // ABORT
 // ─────────────────────────────────────────────────────────────────────────────
-function abortConversion() {
-  if (confirm('Annuler la conversion en cours ?')) { aborted = true; }
+// null par défaut = arrêt "dur" (ex: onerror, page qui se ferme) traité
+// comme une pause (checkpoint conservé) plutôt qu'une annulation.
+let __stopReason = null; // 'pause' | 'cancel'
+
+function pauseConversion() {
+  if (confirm(
+    'Mettre la conversion en pause ?\n\n' +
+    'La progression déjà encodée (chapitres terminés) est conservée. ' +
+    'Pour reprendre : recharge le même ePub, coche les mêmes chapitres, ' +
+    'choisis la même voix, et relance la conversion — elle continuera ' +
+    'automatiquement là où tu t\'es arrêté.'
+  )) {
+    __stopReason = 'pause';
+    aborted = true;
+  }
 }
 
-function onAbort() {
-  document.getElementById('abortBtn').style.display = 'none';
+function abortConversion() {
+  if (confirm(
+    'Annuler définitivement la conversion en cours ?\n\n' +
+    'Contrairement à "Mettre en pause", ceci efface aussi la reprise ' +
+    'sauvegardée — la prochaine conversion de ce livre repartira de zéro.'
+  )) {
+    __stopReason = 'cancel';
+    aborted = true;
+  }
+}
+
+async function onAbort() {
+  document.getElementById('stopBtnRow').style.display = 'none';
   document.getElementById('actionRow').style.display = 'flex';
-  log('✕ Conversion annulée par l\'utilisateur','err');
-  updateGlobal(0, 'Annulé');
+  if (__stopReason === 'cancel') {
+    await clearResumeCheckpoint();
+    log('✕ Conversion annulée par l\'utilisateur (reprise effacée)','err');
+    updateGlobal(0, 'Annulé');
+  } else {
+    log('⏸ Conversion mise en pause — recharge le même ePub pour reprendre','hi');
+    updateGlobal(0, 'En pause');
+  }
+  __stopReason = null;
   stopConversionTimer();
   releaseWakeLock();
 }
