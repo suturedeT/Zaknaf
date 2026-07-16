@@ -57,13 +57,6 @@ import sys
 import threading
 import wave
 
-# Lock global : kokoro_onnx.Kokoro a un état interne (session ONNX + tokenizer
-# + tampons) qui peut être corrompu par appels concurrents Flask threaded.
-# Symptôme observé : audio de la requête A retourné à la requête B, mots
-# mélangés entre phrases adjacentes. La synthèse étant courte (~secondes),
-# sérialiser n'a pas d'impact perceptible sur le throughput global.
-_SYNTH_LOCK = threading.Lock()
-
 # UTF-8 sur la console Windows
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -355,14 +348,26 @@ except Exception as e:
 
 # ── Voix fm_drow (modèle PyTorch fine-tuné séparé, pas le moteur ONNX) ──
 # Package self-contained : fm_drow.pth (poids), config.json, voices/fm_drow.pt
+#
+# Pool de N instances indépendantes, même principe que le pool Kokoro ONNX
+# ci-dessus : chaque instance recharge son propre modèle (pas d'état
+# partagé -> pas de risque de mélange), une seule requête à la fois PAR
+# instance. Différence avec l'ONNX : PyTorch n'expose pas de réglage de
+# threads PAR SESSION (contrairement à onnxruntime.SessionOptions) --
+# torch.set_num_threads() est un réglage global au process. On le fixe
+# une fois à (cœurs / N) pour limiter la sursouscription CPU quand
+# plusieurs instances tournent en parallèle.
 DROW_DIR = r"C:\Users\EA_ADM\Documents\claude_ai\drizzt_out\fm_drow_kokoro"
 DROW_SAMPLE_RATE = 24000
-_drow_pipeline = None
+NUM_DROW_WORKERS = int(os.environ.get('DROW_WORKERS', '2'))
+_drow_pipeline = None  # 1re instance -- sert juste de flag "fm_drow disponible"
 _drow_voice = None
+_drow_pool = queue.Queue()
 
 def _load_drow():
-    """Charge le pipeline PyTorch fm_drow. Best-effort : une erreur ici ne doit
-    pas empêcher le serveur ONNX de démarrer, juste priver la voix fm_drow."""
+    """Charge un pool de pipelines PyTorch fm_drow. Best-effort : une erreur
+    ici ne doit pas empêcher le serveur ONNX de démarrer, juste priver la
+    voix fm_drow."""
     global _drow_pipeline, _drow_voice
     if not os.path.isdir(DROW_DIR):
         print(f"  ! fm_drow non trouve ({DROW_DIR}) -- voix ignoree")
@@ -370,9 +375,17 @@ def _load_drow():
     try:
         os.environ.setdefault('HF_HUB_OFFLINE', '1')
         sys.path.insert(0, DROW_DIR)
+        import torch
+        torch.set_num_threads(max(1, _cpu_count // NUM_DROW_WORKERS))
         from fm_drow import load as _drow_load
-        _drow_pipeline, _drow_voice = _drow_load(device='cpu')
-        print("  OK fm_drow charge (modele PyTorch fine-tune)")
+        print(f"  Chargement de {NUM_DROW_WORKERS} instance(s) fm_drow...", flush=True)
+        for _i in range(NUM_DROW_WORKERS):
+            print(f"    instance {_i+1}/{NUM_DROW_WORKERS}...", flush=True)
+            pipeline, voice = _drow_load(device='cpu')
+            _drow_pool.put((pipeline, voice))
+            if _drow_pipeline is None:
+                _drow_pipeline, _drow_voice = pipeline, voice
+        print(f"  OK fm_drow charge ({NUM_DROW_WORKERS} instance(s), modele PyTorch fine-tune)")
     except Exception as e:
         print(f"  ! Erreur chargement fm_drow : {e}")
 
@@ -473,16 +486,19 @@ def synth_one(text, voice, speed, lang):
     Kokoro indépendantes -- une seule requête à la fois PAR instance (donc
     pas de risque de mélange), mais jusqu'à N requêtes en parallèle au total.
 
-    fm_drow reste sérialisée via _SYNTH_LOCK (moteur PyTorch séparé, pas
-    encore validé en multi-instance).
+    fm_drow : même principe via son propre pool de N instances PyTorch
+    indépendantes (voir _drow_pool / NUM_DROW_WORKERS).
 
     Si 'voice' est le nom d'un blend custom, on passe l'embedding numpy
     directement au lieu d'un nom de voix.
     """
     # fm_drow : moteur PyTorch séparé, pas le moteur ONNX kokoro_onnx
     if voice == 'fm_drow' and _drow_pipeline is not None:
-        with _SYNTH_LOCK:
-            chunks = [a for _gs, _ps, a in _drow_pipeline(text, voice=_drow_voice, speed=speed)]
+        pipeline, drow_voice = _drow_pool.get()
+        try:
+            chunks = [a for _gs, _ps, a in pipeline(text, voice=drow_voice, speed=speed)]
+        finally:
+            _drow_pool.put((pipeline, drow_voice))
         if not chunks:
             raise RuntimeError('Synthèse fm_drow vide')
         return np.concatenate(chunks).astype('float32'), DROW_SAMPLE_RATE

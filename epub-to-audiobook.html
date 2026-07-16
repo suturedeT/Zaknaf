@@ -2615,14 +2615,13 @@ async function startConversion() {
       }
     } else {
       // Concurrence adaptée au backend :
-      // - Kokoro ONNX (ff_siwis, fm_george...) : 2 (le serveur a maintenant
-      //   un pool de 2 instances indépendantes -> parallélisme réel)
-      // - fm_drow : 1 (moteur PyTorch séparé, toujours sérialisé côté serveur)
+      // - Kokoro (ff_siwis, fm_george, fm_drow) : 2 -- toutes les voix Kokoro
+      //   ont maintenant un pool de 2 instances indépendantes côté serveur
+      //   (parallélisme réel ; gain plus modeste pour fm_drow, ~1.5x au lieu
+      //   de ~2x pour les voix ONNX, PyTorch a moins de marge sur 4 cœurs)
       // - Piper local : 4 (Piper est plus tolérant, reste local)
       // - Google API   : 4 (cloud, supporte le parallèle)
-      const isKokoroDrow = selectedVoice === 'kokoro:fm_drow';
-      const effectiveConcurrency = isKokoroDrow ? 1
-                                 : isKokoroVoice(selectedVoice) ? 2
+      const effectiveConcurrency = isKokoroVoice(selectedVoice) ? 2
                                  : isPiperVoice(selectedVoice)  ? 4
                                  : CONCURRENCY;
       for (let i = 0; i < total; i += effectiveConcurrency) {
