@@ -357,9 +357,16 @@ except Exception as e:
 # torch.set_num_threads() est un réglage global au process. On le fixe
 # une fois à (cœurs / N) pour limiter la sursouscription CPU quand
 # plusieurs instances tournent en parallèle.
+#
+# ⚠️ Défaut = 1 (pas de pool) : mesuré à ~1.3-1.4 Go PAR instance en RAM
+# (bien plus que les 312 Mo du checkpoint seul -- encodeur BERT, buffers
+# d'activation, misaki/spacy...). 2 instances ont provoqué un vrai OOM
+# crash sur cette machine (16 Go RAM, ~4 Go libres) : "not enough memory"
+# en plein milieu d'une conversion. Le gain mesuré (~1.5x) ne justifiait
+# pas le risque. Augmenter DROW_WORKERS seulement si tu as > 8 Go libres.
 DROW_DIR = r"C:\Users\EA_ADM\Documents\claude_ai\drizzt_out\fm_drow_kokoro"
 DROW_SAMPLE_RATE = 24000
-NUM_DROW_WORKERS = int(os.environ.get('DROW_WORKERS', '2'))
+NUM_DROW_WORKERS = int(os.environ.get('DROW_WORKERS', '1'))
 _drow_pipeline = None  # 1re instance -- sert juste de flag "fm_drow disponible"
 _drow_voice = None
 _drow_pool = queue.Queue()
