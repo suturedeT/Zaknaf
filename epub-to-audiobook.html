@@ -3105,8 +3105,28 @@ function fixSSMLElisions(ssml) {
   //    - On STRIP les <prosody>/<emphasis> au niveau MOT (< 40 chars de
   //      contenu) → ces wrappers courts cassent les liaisons français.
   //    - On STRIP TOUTES les <lang> (forçaient prononciation anglaise).
+  //
+  // BUGFIX : le "garde si >= 40 chars" ci-dessous ne survivait PAS -- le
+  // nettoyage inconditionnel de balises orphelines un peu plus bas (prévu
+  // pour des balises malformées non appariées venant de Claude) supprimait
+  // ENSUITE toutes les <prosody>/<emphasis> restantes sans vérifier la
+  // longueur, annulant cette décision. Résultat réel en prod : les variations
+  // de rythme/intonation générées par le prompt Claude n'atteignaient jamais
+  // Google TTS. Corrigé en cachant UNIQUEMENT les balises (pas le contenu)
+  // des blocs conservés derrière des marqueurs opaques, immunisés contre le
+  // nettoyage suivant -- le contenu reste du texte normal donc les
+  // prononciations personnalisées (étape 6) continuent de s'y appliquer
+  // normalement. Les marqueurs sont restaurés en toute fin de fonction.
+  const __keptTags = [];
   ssml = ssml.replace(/<(prosody|emphasis)([^>]*)>([\s\S]*?)<\/\1>/g,
-    (m, tag, attrs, content) => content.length >= 40 ? m : content
+    (m, tag, attrs, content) => {
+      if (content.length < 40) return content;
+      __keptTags.push(`<${tag}${attrs}>`);
+      const openPh = `\x03KEEP${__keptTags.length - 1}\x03`;
+      __keptTags.push(`</${tag}>`);
+      const closePh = `\x03KEEP${__keptTags.length - 1}\x03`;
+      return `${openPh}${content}${closePh}`;
+    }
   );
   ssml = ssml.replace(/<lang[^>]*>([\s\S]*?)<\/lang>/g, '$1');
   // <say-as ...> : Claude le génère parfois par erreur autour d'un mot normal,
@@ -3158,6 +3178,11 @@ function fixSSMLElisions(ssml) {
         `<lang xml:lang="${value.lang}">${value.alt || m}</lang>`
       );
     }
+  }
+
+  // Restaure les balises prosody/emphasis conservées (marqueurs de l'étape 5).
+  if (__keptTags.length) {
+    ssml = ssml.replace(/\x03KEEP(\d+)\x03/g, (m, idx) => __keptTags[parseInt(idx, 10)]);
   }
 
   return ssml;
