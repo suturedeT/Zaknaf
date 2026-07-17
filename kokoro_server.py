@@ -367,6 +367,11 @@ except Exception as e:
 DROW_DIR = r"C:\Users\EA_ADM\Documents\claude_ai\drizzt_out\fm_drow_kokoro"
 DROW_SAMPLE_RATE = 24000
 NUM_DROW_WORKERS = int(os.environ.get('DROW_WORKERS', '1'))
+# Filet de securite memoire : meme avec torch.inference_mode(), la RAM du process
+# a continue de grimper sans plateau net sur un test soutenu (40->70 requetes :
+# 2303 -> 2497 Mo). Rechargement periodique de l'instance pour purger toute
+# fragmentation accumulee, quelle qu'en soit la cause exacte.
+DROW_RELOAD_AFTER = int(os.environ.get('DROW_RELOAD_AFTER', '50'))
 _drow_pipeline = None  # 1re instance -- sert juste de flag "fm_drow disponible"
 _drow_voice = None
 _drow_pool = queue.Queue()
@@ -389,7 +394,7 @@ def _load_drow():
         for _i in range(NUM_DROW_WORKERS):
             print(f"    instance {_i+1}/{NUM_DROW_WORKERS}...", flush=True)
             pipeline, voice = _drow_load(device='cpu')
-            _drow_pool.put((pipeline, voice))
+            _drow_pool.put([pipeline, voice, 0])  # [pipeline, voice, compteur d'usage]
             if _drow_pipeline is None:
                 _drow_pipeline, _drow_voice = pipeline, voice
         print(f"  OK fm_drow charge ({NUM_DROW_WORKERS} instance(s), modele PyTorch fine-tune)")
@@ -462,14 +467,25 @@ for v in voices:
 
 
 # ── Init Flask + CORS ─────────────────────────────────────────────────
+# Flask exécute les after_request dans l'ordre INVERSE de leur enregistrement
+# (le dernier enregistré s'exécute en premier). add_pna_header doit donc être
+# enregistré AVANT CORS(app,...) pour s'exécuter APRÈS lui et avoir le dernier
+# mot : flask-cors ajoute lui-même un header Access-Control-Allow-Private-Network:
+# false (via .add(), pas une simple affectation), ce qui produisait DEUX valeurs
+# concurrentes dans la réponse ('true' puis 'false') -> Chrome bloquait le fetch
+# private-network (page HTTPS publique -> 127.0.0.1) avec "Permission was denied
+# for this request to access the `loopback` address space", même si le serveur
+# tournait parfaitement. headers[...]= remplace toutes les valeurs existantes.
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
 
 
 @app.after_request
 def add_pna_header(response):
     response.headers['Access-Control-Allow-Private-Network'] = 'true'
     return response
+
+
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 
 @app.route('/health', methods=['GET'])
@@ -501,11 +517,36 @@ def synth_one(text, voice, speed, lang):
     """
     # fm_drow : moteur PyTorch séparé, pas le moteur ONNX kokoro_onnx
     if voice == 'fm_drow' and _drow_pipeline is not None:
-        pipeline, drow_voice = _drow_pool.get()
+        import torch, gc
+        item = _drow_pool.get()  # [pipeline, voice, compteur d'usage]
+        pipeline, drow_voice, use_count = item
         try:
-            chunks = [a for _gs, _ps, a in pipeline(text, voice=drow_voice, speed=speed)]
+            # ⚠️ CRITIQUE : sans inference_mode(), PyTorch construit un graphe
+            # autograd (gradients) à CHAQUE appel, jamais utilisé ici mais
+            # jamais libéré non plus -- fuite mémoire lente qui finit par
+            # planter (OOM / access violation) après des centaines d'appels
+            # sur un livre entier, invisible sur quelques requêtes de test.
+            with torch.inference_mode():
+                chunks = [a for _gs, _ps, a in pipeline(text, voice=drow_voice, speed=speed)]
         finally:
-            _drow_pool.put((pipeline, drow_voice))
+            use_count += 1
+            # Filet de sécurité supplémentaire : même avec inference_mode(),
+            # l'allocateur mémoire natif de PyTorch peut fragmenter sur des
+            # entrées de longueur variable (mesuré : croissance ~2500 Mo sur
+            # 70 requêtes soutenues, sans palier net observé). On recharge
+            # l'instance périodiquement pour repartir sur une base propre.
+            if use_count >= DROW_RELOAD_AFTER:
+                try:
+                    print(f"  [fm_drow] Rechargement instance après {use_count} requêtes (purge mémoire)...", flush=True)
+                    del pipeline
+                    gc.collect()
+                    from fm_drow import load as _drow_load
+                    pipeline, drow_voice = _drow_load(device='cpu')
+                    use_count = 0
+                    print(f"  [fm_drow] Instance rechargée")
+                except Exception as e:
+                    print(f"  ! Erreur rechargement fm_drow (instance conservée) : {e}")
+            _drow_pool.put([pipeline, drow_voice, use_count])
         if not chunks:
             raise RuntimeError('Synthèse fm_drow vide')
         return np.concatenate(chunks).astype('float32'), DROW_SAMPLE_RATE

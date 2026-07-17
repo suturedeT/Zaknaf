@@ -2428,6 +2428,14 @@ async function startConversion() {
   const allResults = []; // un { url, title, sizeMB, durMin, ext } par livre
   let grandTotalSentences = 0;
 
+  // Filet de sécurité : sans ce try/catch, une exception non rattrapée
+  // n'importe où dans les boucles ci-dessous (ex: échec TTS après 3 tentatives)
+  // remontait telle quelle jusqu'en haut de startConversion(), tuant toute la
+  // fonction en silence -- plus aucune mise à jour d'UI, le bouton "pause" ne
+  // faisait plus rien, et rien n'indiquait à l'utilisateur que la conversion
+  // était en réalité morte (juste figée à l'écran, indiscernable d'un simple
+  // ralentissement). Vécu en conditions réelles sur "Le Drow Solitaire".
+  try {
   // ──────── BOUCLE EXTERNE : un livre par itération ──────────────────
   for (let bookIdx = 0; bookIdx < booksToProcess.length; bookIdx++) {
     if (aborted) { onAbort(); return; }
@@ -2784,6 +2792,19 @@ async function startConversion() {
   // Livre terminé avec succès : le checkpoint de reprise n'a plus lieu d'être.
   await clearResumeCheckpoint();
   } // fin de la boucle externe sur les livres
+  } catch (e) {
+    // On NE touche PAS au checkpoint de reprise ici : contrairement à une
+    // fin normale (clearResumeCheckpoint juste au-dessus) ou à une annulation
+    // explicite (abortConversion), une erreur inattendue doit laisser la
+    // reprise intacte pour le prochain essai.
+    console.error('[Conversion] Erreur fatale non rattrapée :', e);
+    log(`✗ Conversion interrompue par une erreur inattendue : ${e.message} — la progression déjà sauvegardée est conservée. Recharge la page et resélectionne le même livre pour reprendre.`, 'err');
+    document.getElementById('stopBtnRow').style.display = 'none';
+    document.getElementById('actionRow').style.display = 'flex';
+    stopConversionTimer();
+    await releaseWakeLock();
+    return;
+  }
 
   updateGlobal(1, `Terminé ! ${allResults.length} livre${allResults.length>1?'s':''}`);
   document.getElementById('stopBtnRow').style.display = 'none';
@@ -3477,7 +3498,14 @@ function openTTSCache() {
         store.createIndex('createdAt', 'createdAt');
       }
     };
-    req.onsuccess = () => { __ttsCacheDB = req.result; resolve(__ttsCacheDB); };
+    req.onsuccess = () => {
+      __ttsCacheDB = req.result;
+      // Même bug que openResumeDB() : sans onclose, une connexion fermée par
+      // le navigateur en cours de route reste en cache indéfiniment et casse
+      // toute écriture/lecture suivante avec "InvalidStateError".
+      __ttsCacheDB.onclose = () => { __ttsCacheDB = null; };
+      resolve(__ttsCacheDB);
+    };
     req.onerror   = () => reject(req.error);
   });
 }
@@ -3582,7 +3610,21 @@ function openResumeDB() {
         db.createObjectStore(RESUME_CHAPTERS_STORE, { keyPath: 'ci' });
       }
     };
-    req.onsuccess = () => { clearTimeout(timeoutId); __resumeDB = req.result; resolve(__resumeDB); };
+    req.onsuccess = () => {
+      clearTimeout(timeoutId);
+      __resumeDB = req.result;
+      // Sans ceci, une connexion fermée par le navigateur en cours de route
+      // (ex: réclamation mémoire sur une session de plusieurs heures) reste
+      // en cache indéfiniment -- chaque transaction() suivante échoue alors
+      // avec "InvalidStateError: The database connection is closing", pour
+      // toujours, car openResumeDB() renvoyait la connexion morte sans jamais
+      // la rouvrir. On efface le cache pour forcer une réouverture propre.
+      __resumeDB.onclose = () => {
+        console.error('[Resume] connexion IndexedDB fermée de façon inattendue -- réouverture au prochain appel');
+        __resumeDB = null;
+      };
+      resolve(__resumeDB);
+    };
     req.onerror   = () => { clearTimeout(timeoutId); reject(req.error); };
     req.onblocked = () => console.error('[Resume] indexedDB.open bloqué -- un autre onglet a peut-être une version différente ouverte');
   });
